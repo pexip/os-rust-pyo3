@@ -1,0 +1,5 @@
+rust-pyo3 (0.16.5-1) unstable; urgency=medium
+
+  * Package pyo3 0.16.5 from crates.io using debcargo 2.5.0
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Tue, 06 Sep 2022 20:46:11 +0100
