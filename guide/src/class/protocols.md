@@ -4,8 +4,8 @@ Python's object model defines several protocols for different object behavior, s
 
 In the Python C-API which PyO3 is implemented upon, many of these magic methods have to be placed into special "slots" on the class type object, as covered in the previous section. There are two ways in which this can be done:
 
- - [New in PyO3 0.15, recommended in PyO3 0.16] In `#[pymethods]`, if the name of the method is a recognised magic method, PyO3 will place it in the type object automatically.
- - [Deprecated in PyO3 0.16] In special traits combined with the `#[pyproto]` attribute.
+ - In `#[pymethods]`, if the name of the method is a recognised magic method, PyO3 will place it in the type object automatically.
+ - [Deprecated since PyO3 0.16] In special traits combined with the `#[pyproto]` attribute.
 
 (There are also many magic methods which don't have a special slot, such as `__dir__`. These methods can be implemented as normal in `#[pymethods]`.)
 
@@ -44,7 +44,7 @@ given signatures should be interpreted as follows:
 
   - `__hash__(<self>) -> isize`
 
-    Objects that compare equal must have the same hash value.
+    Objects that compare equal must have the same hash value. Any type up to 64 bits may be returned instead of `isize`, PyO3 will convert to an isize automatically (wrapping unsigned types like `u64` and `usize`).
     <details>
     <summary>Disabling Python's default hash</summary>
     By default, all `#[pyclass]` types have a default hash implementation from Python. Types which should not be hashable can override this by setting `__hash__` to `None`. This is the same mechanism as for a pure-Python class. This is done like so:
@@ -67,11 +67,16 @@ given signatures should be interpreted as follows:
 
     Overloads Python comparison operations (`==`, `!=`, `<`, `<=`, `>`, and `>=`).
     The `CompareOp` argument indicates the comparison operation being performed.
+
+    _Note that implementing `__richcmp__` will cause Python not to generate a default `__hash__` implementation, so consider implementing `__hash__` when implementing `__richcmp__`._
     <details>
     <summary>Return type</summary>
     The return type will normally be `PyResult<bool>`, but any Python object can be returned.
-    If the `object` is not of the type specified in the signature, the generated code will
-    automatically `return NotImplemented`.
+    If the second argument `object` is not of the type specified in the
+    signature, the generated code will automatically `return NotImplemented`.
+
+    You can use [`CompareOp::matches`] to adapt a Rust `std::cmp::Ordering` result
+    to the requested comparison.
     </details>
 
   - `__getattr__(<self>, object) -> object`
@@ -204,9 +209,11 @@ Mapping types usually will not want the sequence slots filled. Having them fille
 
 Use the `#[pyclass(mapping)]` annotation to instruct PyO3 to only fill the mapping slots, leaving the sequence ones empty. This will apply to `__getitem__`, `__setitem__`, and `__delitem__`.
 
+Use the `#[pyclass(sequence)]` annotation to instruct PyO3 to fill the `sq_length` slot instead of the `mp_length` slot for `__len__`. This will help libraries such as `numpy` recognise the class as a sequence, however will also cause CPython to automatically add the sequence length to any negative indices before passing them to `__getitem__`. (`__getitem__`, `__setitem__` and `__delitem__` mapping slots are still used for sequences, for slice operations.)
+
   - `__len__(<self>) -> usize`
 
-    Implements the built-in function `len()` for the sequence.
+    Implements the built-in function `len()`.
 
   - `__contains__(<self>, object) -> bool`
 
@@ -404,7 +411,7 @@ impl ClassWithGCSupport {
 
 PyO3 can use the `#[pyproto]` attribute in combination with special traits to implement the magic methods which need slots. The special traits are listed below. See also the [documentation for the `pyo3::class` module]({{#PYO3_DOCS_URL}}/pyo3/class/index.html).
 
-Due to complexity in the implementation and usage, these traits are deprecated in PyO3 0.16 in favour of the `#[pymethods]` solution.
+Due to complexity in the implementation and usage, these traits were deprecated in PyO3 0.16 in favour of the `#[pymethods]` solution.
 
 All `#[pyproto]` methods can return `T` instead of `PyResult<T>` if the method implementation is infallible. In addition, if the return type is `()`, it can be omitted altogether.
 
@@ -611,3 +618,4 @@ For details, look at the `#[pymethods]` regarding GC methods.
 [`PySequenceProtocol`]: {{#PYO3_DOCS_URL}}/pyo3/class/sequence/trait.PySequenceProtocol.html
 [`PyIterProtocol`]: {{#PYO3_DOCS_URL}}/pyo3/class/iter/trait.PyIterProtocol.html
 [`PySequence`]: {{#PYO3_DOCS_URL}}/pyo3/types/struct.PySequence.html
+[`CompareOp::matches`]: {{#PYO3_DOCS_URL}}/pyo3/pyclass/enum.CompareOp.html#method.matches

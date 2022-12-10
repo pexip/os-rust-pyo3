@@ -97,14 +97,16 @@ pub fn prepare_freethreaded_python() {
 /// - The return value of the closure must not contain any Python value, _including_ `PyResult`.
 ///
 /// # Examples
-/// ```rust
-/// use pyo3::prelude::*;
 ///
-/// # fn main() -> PyResult<()>{
+/// ```rust
 /// unsafe {
-///     pyo3::with_embedded_python_interpreter(|py| py.run("print('Hello World')", None, None))
+///     pyo3::with_embedded_python_interpreter(|py| {
+///        if let Err(e) = py.run("print('Hello World')", None, None){
+///            // We must make sure to not return a `PyErr`!
+///            e.print(py);
+///        }
+///     });
 /// }
-/// # }
 /// ```
 #[cfg(not(PyPy))]
 pub unsafe fn with_embedded_python_interpreter<F, R>(f: F) -> R
@@ -149,6 +151,7 @@ where
 /// use pyo3::Python;
 ///
 /// {
+///     #[allow(deprecated)]
 ///     let gil_guard = Python::acquire_gil();
 ///     let py = gil_guard.python();
 /// } // GIL is released when gil_guard is dropped
@@ -174,7 +177,7 @@ impl GILGuard {
     /// `GILGuard` will also contain a `GILPool`.
     pub(crate) fn acquire() -> GILGuard {
         // Maybe auto-initialize the GIL:
-        //  - If auto-initialize feature set and supported, try to initalize the interpreter.
+        //  - If auto-initialize feature set and supported, try to initialize the interpreter.
         //  - If the auto-initialize feature is set but unsupported, emit hard errors only when the
         //    extension-module feature is not activated - extension modules don't care about
         //    auto-initialize so this avoids breaking existing builds.
@@ -199,7 +202,7 @@ impl GILGuard {
                     assert_ne!(
                         ffi::Py_IsInitialized(),
                         0,
-                        "The Python interpreter is not initalized and the `auto-initialize` \
+                        "The Python interpreter is not initialized and the `auto-initialize` \
                          feature is not enabled.\n\n\
                          Consider calling `pyo3::prepare_freethreaded_python()` before attempting \
                          to use Python APIs."
@@ -514,6 +517,7 @@ mod tests {
 
     #[test]
     fn test_owned() {
+        #[allow(deprecated)]
         let gil = Python::acquire_gil();
         let py = gil.python();
         let obj = get_object(py);
@@ -539,6 +543,7 @@ mod tests {
 
     #[test]
     fn test_owned_nested() {
+        #[allow(deprecated)]
         let gil = Python::acquire_gil();
         let py = gil.python();
         let obj = get_object(py);
@@ -572,6 +577,7 @@ mod tests {
 
     #[test]
     fn test_pyobject_drop_with_gil_decreases_refcnt() {
+        #[allow(deprecated)]
         let gil = Python::acquire_gil();
         let py = gil.python();
         let obj = get_object(py);
@@ -593,6 +599,7 @@ mod tests {
 
     #[test]
     fn test_pyobject_drop_without_gil_doesnt_decrease_refcnt() {
+        #[allow(deprecated)]
         let gil = Python::acquire_gil();
         let py = gil.python();
         let obj = get_object(py);
@@ -613,6 +620,7 @@ mod tests {
 
             {
                 // Next time the GIL is acquired, the object is released
+                #[allow(deprecated)]
                 let _gil = Python::acquire_gil();
                 assert_eq!(ffi::Py_REFCNT(obj_ptr), 1);
             }
@@ -625,6 +633,7 @@ mod tests {
         let get_gil_count = || GIL_COUNT.with(|c| c.get());
 
         assert_eq!(get_gil_count(), 0);
+        #[allow(deprecated)]
         let gil = Python::acquire_gil();
         assert_eq!(get_gil_count(), 1);
 
@@ -638,6 +647,7 @@ mod tests {
         drop(pool);
         assert_eq!(get_gil_count(), 2);
 
+        #[allow(deprecated)]
         let gil2 = Python::acquire_gil();
         assert_eq!(get_gil_count(), 3);
 
@@ -654,6 +664,7 @@ mod tests {
     #[test]
     fn test_allow_threads() {
         // allow_threads should temporarily release GIL in PyO3's internal tracking too.
+        #[allow(deprecated)]
         let gil = Python::acquire_gil();
         let py = gil.python();
 
@@ -662,6 +673,7 @@ mod tests {
         py.allow_threads(move || {
             assert!(!gil_is_acquired());
 
+            #[allow(deprecated)]
             let gil = Python::acquire_gil();
             assert!(gil_is_acquired());
 
@@ -675,9 +687,11 @@ mod tests {
     #[test]
     fn dropping_gil_does_not_invalidate_references() {
         // Acquiring GIL for the second time should be safe - see #864
+        #[allow(deprecated)]
         let gil = Python::acquire_gil();
         let py = gil.python();
 
+        #[allow(deprecated)]
         let gil2 = Python::acquire_gil();
         let obj = py.eval("object()", None, None).unwrap();
         drop(gil2);
@@ -688,6 +702,7 @@ mod tests {
 
     #[test]
     fn test_clone_with_gil() {
+        #[allow(deprecated)]
         let gil = Python::acquire_gil();
         let py = gil.python();
 
@@ -727,6 +742,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // We are building wasm Python with pthreads disabled
     fn test_clone_without_gil() {
         use crate::{Py, PyAny};
         use std::{sync::Arc, thread};
@@ -740,7 +756,7 @@ mod tests {
             let obj: Arc<Py<PyAny>> = Arc::new(get_object(py));
             let thread_obj = Arc::clone(&obj);
 
-            let count = (&*obj).get_refcnt(py);
+            let count = obj.get_refcnt(py);
             println!(
                 "1: The object has been created and its reference count is {}",
                 count
@@ -797,6 +813,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // We are building wasm Python with pthreads disabled
     fn test_clone_in_other_thread() {
         use crate::Py;
         use std::{sync::Arc, thread};
@@ -846,6 +863,7 @@ mod tests {
         // update_counts can run arbitrary Python code during Py_DECREF.
         // if the locking is implemented incorrectly, it will deadlock.
 
+        #[allow(deprecated)]
         let gil = Python::acquire_gil();
         let obj = get_object(gil.python());
 

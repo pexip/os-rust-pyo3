@@ -122,10 +122,12 @@
 use crate::err::{self, PyDowncastError, PyErr, PyResult};
 use crate::gil::{self, GILGuard, GILPool};
 use crate::impl_::not_send::NotSend;
-use crate::type_object::{PyTypeInfo, PyTypeObject};
-use crate::types::{PyAny, PyDict, PyModule, PyType};
+use crate::types::{PyAny, PyDict, PyModule, PyString, PyType};
 use crate::version::PythonVersionInfo;
-use crate::{ffi, AsPyPointer, FromPyPointer, IntoPyPointer, PyNativeType, PyObject, PyTryFrom};
+use crate::{
+    ffi, AsPyPointer, FromPyPointer, IntoPy, IntoPyPointer, Py, PyNativeType, PyObject, PyTryFrom,
+    PyTypeInfo,
+};
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
 use std::os::raw::c_int;
@@ -182,7 +184,7 @@ mod negative_impls {
     impl !Ungil for crate::ffi::PyCodeObject {}
     #[cfg(not(Py_LIMITED_API))]
     impl !Ungil for crate::ffi::PyDictKeysObject {}
-    #[cfg(not(Py_LIMITED_API))]
+    #[cfg(not(any(Py_LIMITED_API, Py_3_10)))]
     impl !Ungil for crate::ffi::PyArena {}
 }
 
@@ -286,6 +288,10 @@ impl Python<'_> {
     #[cfg_attr(PyPy, doc = "`prepare_freethreaded_python`")]
     /// for details.
     ///
+    /// If the current thread does not yet have a Python "thread state" associated with it,
+    /// a new one will be automatically created before `F` is executed and destroyed after `F`
+    /// completes.
+    ///
     /// # Panics
     ///
     /// - If the [`auto-initialize`] feature is not enabled and the Python interpreter is not
@@ -377,9 +383,18 @@ impl<'py> Python<'py> {
     /// allowed, and will not deadlock. However, [`GILGuard`]s must be dropped in the reverse order
     /// to acquisition. If PyO3 detects this order is not maintained, it will panic when the out-of-order drop occurs.
     ///
+    /// # Deprecation
+    ///
+    /// This API has been deprecated for several reasons:
+    /// - GIL drop order tracking has turned out to be [error prone](https://github.com/PyO3/pyo3/issues/1683).
+    /// With a scoped API like `Python::with_gil`, these are always dropped in the correct order.
+    /// - It promotes passing and keeping the GILGuard around, which is almost always not what you actually want.
+    ///
     /// [`PyGILState_Ensure`]: crate::ffi::PyGILState_Ensure
     /// [`auto-initialize`]: https://pyo3.rs/main/features.html#auto-initialize
     #[inline]
+    // Once removed, we can remove GILGuard's drop tracking.
+    #[deprecated(since = "0.17.0", note = "prefer Python::with_gil")]
     pub fn acquire_gil() -> GILGuard {
         GILGuard::acquire()
     }
@@ -583,13 +598,16 @@ impl<'py> Python<'py> {
     /// Gets the Python type object for type `T`.
     pub fn get_type<T>(self) -> &'py PyType
     where
-        T: PyTypeObject,
+        T: PyTypeInfo,
     {
         T::type_object(self)
     }
 
     /// Imports the Python module with the specified name.
-    pub fn import(self, name: &str) -> PyResult<&'py PyModule> {
+    pub fn import<N>(self, name: N) -> PyResult<&'py PyModule>
+    where
+        N: IntoPy<Py<PyString>>,
+    {
         PyModule::import(self, name)
     }
 
@@ -797,7 +815,7 @@ impl<'py> Python<'py> {
     ///
     /// This function calls [`PyErr_CheckSignals()`][1] which in turn may call signal handlers.
     /// As Python's [`signal`][2] API allows users to define custom signal handlers, calling this
-    /// function allows arbitary Python code inside signal handlers to run.
+    /// function allows arbitrary Python code inside signal handlers to run.
     ///
     /// [1]: https://docs.python.org/3/c-api/exceptions.html?highlight=pyerr_checksignals#c.PyErr_CheckSignals
     /// [2]: https://docs.python.org/3/library/signal.html
@@ -937,6 +955,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // We are building wasm Python with pthreads disabled
     fn test_allow_threads_releases_and_acquires_gil() {
         Python::with_gil(|py| {
             let b = std::sync::Arc::new(std::sync::Barrier::new(2));
@@ -1004,13 +1023,10 @@ mod tests {
         let state = unsafe { crate::ffi::PyGILState_Check() };
         assert_eq!(state, GIL_NOT_HELD);
 
-        {
-            let gil = Python::acquire_gil();
-            let _py = gil.python();
+        Python::with_gil(|_| {
             let state = unsafe { crate::ffi::PyGILState_Check() };
             assert_eq!(state, GIL_HELD);
-            drop(gil);
-        }
+        });
 
         let state = unsafe { crate::ffi::PyGILState_Check() };
         assert_eq!(state, GIL_NOT_HELD);

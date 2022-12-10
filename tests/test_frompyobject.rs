@@ -2,7 +2,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyString, PyTuple};
+use pyo3::types::{PyDict, PyList, PyString, PyTuple};
 
 #[macro_use]
 mod common;
@@ -74,7 +74,7 @@ pub struct B {
 #[test]
 fn test_transparent_named_field_struct() {
     Python::with_gil(|py| {
-        let test = "test".into_py(py);
+        let test: PyObject = "test".into_py(py);
         let b: B = FromPyObject::extract(test.as_ref(py)).expect("Failed to extract B from String");
         assert_eq!(b.test, "test");
         let test: PyObject = 1.into_py(py);
@@ -92,7 +92,7 @@ pub struct D<T> {
 #[test]
 fn test_generic_transparent_named_field_struct() {
     Python::with_gil(|py| {
-        let test = "test".into_py(py);
+        let test: PyObject = "test".into_py(py);
         let d: D<String> =
             D::extract(test.as_ref(py)).expect("Failed to extract D<String> from String");
         assert_eq!(d.test, "test");
@@ -180,7 +180,7 @@ fn test_transparent_tuple_struct() {
         let tup: PyObject = 1.into_py(py);
         let tup = TransparentTuple::extract(tup.as_ref(py));
         assert!(tup.is_err());
-        let test = "test".into_py(py);
+        let test: PyObject = "test".into_py(py);
         let tup = TransparentTuple::extract(test.as_ref(py))
             .expect("Failed to extract TransparentTuple from PyTuple");
         assert_eq!(tup.0, "test");
@@ -282,7 +282,7 @@ fn test_transparent_tuple_error_message() {
         assert!(tup.is_err());
         assert_eq!(
             extract_traceback(py, tup.unwrap_err()),
-            "TypeError: failed to extract inner field of TransparentTuple: 'int' object \
+            "TypeError: failed to extract field TransparentTuple.0: TypeError: 'int' object \
          cannot be converted to 'PyString'",
         );
     });
@@ -391,13 +391,28 @@ fn test_enum_error() {
             err.to_string(),
             "\
 TypeError: failed to extract enum Foo ('TupleVar | StructVar | TransparentTuple | TransparentStructVar | StructVarGetAttrArg | StructWithGetItem | StructWithGetItemArg')
-- variant TupleVar (TupleVar): 'dict' object cannot be converted to 'PyTuple'
-- variant StructVar (StructVar): 'dict' object has no attribute 'test'
-- variant TransparentTuple (TransparentTuple): 'dict' object cannot be interpreted as an integer
-- variant TransparentStructVar (TransparentStructVar): failed to extract field Foo :: TransparentStructVar.a
-- variant StructVarGetAttrArg (StructVarGetAttrArg): 'dict' object has no attribute 'bla'
-- variant StructWithGetItem (StructWithGetItem): 'a'
-- variant StructWithGetItemArg (StructWithGetItemArg): 'foo'"
+- variant TupleVar (TupleVar): TypeError: 'dict' object cannot be converted to 'PyTuple'
+- variant StructVar (StructVar): AttributeError: 'dict' object has no attribute 'test'
+- variant TransparentTuple (TransparentTuple): TypeError: failed to extract field Foo::TransparentTuple.0, caused by TypeError: 'dict' object cannot be interpreted as an integer
+- variant TransparentStructVar (TransparentStructVar): TypeError: failed to extract field Foo::TransparentStructVar.a, caused by TypeError: 'dict' object cannot be converted to 'PyString'
+- variant StructVarGetAttrArg (StructVarGetAttrArg): AttributeError: 'dict' object has no attribute 'bla'
+- variant StructWithGetItem (StructWithGetItem): KeyError: 'a'
+- variant StructWithGetItemArg (StructWithGetItemArg): KeyError: 'foo'"
+        );
+
+        let tup = PyTuple::empty(py);
+        let err = Foo::extract(tup.as_ref()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "\
+TypeError: failed to extract enum Foo ('TupleVar | StructVar | TransparentTuple | TransparentStructVar | StructVarGetAttrArg | StructWithGetItem | StructWithGetItemArg')
+- variant TupleVar (TupleVar): ValueError: expected tuple of length 2, but got tuple of length 0
+- variant StructVar (StructVar): AttributeError: 'tuple' object has no attribute 'test'
+- variant TransparentTuple (TransparentTuple): TypeError: failed to extract field Foo::TransparentTuple.0, caused by TypeError: 'tuple' object cannot be interpreted as an integer
+- variant TransparentStructVar (TransparentStructVar): TypeError: failed to extract field Foo::TransparentStructVar.a, caused by TypeError: 'tuple' object cannot be converted to 'PyString'
+- variant StructVarGetAttrArg (StructVarGetAttrArg): AttributeError: 'tuple' object has no attribute 'bla'
+- variant StructWithGetItem (StructWithGetItem): TypeError: tuple indices must be integers or slices, not str
+- variant StructWithGetItemArg (StructWithGetItemArg): TypeError: tuple indices must be integers or slices, not str"
         );
     });
 }
@@ -448,10 +463,10 @@ fn test_err_rename() {
         assert_eq!(
             f.unwrap_err().to_string(),
             "\
-TypeError: failed to extract enum Bar (\'str | uint | int\')
-- variant A (str): \'dict\' object cannot be converted to \'PyString\'
-- variant B (uint): \'dict\' object cannot be interpreted as an integer
-- variant C (int): \'dict\' object cannot be interpreted as an integer"
+TypeError: failed to extract enum Bar ('str | uint | int')
+- variant A (str): TypeError: failed to extract field Bar::A.0, caused by TypeError: 'dict' object cannot be converted to 'PyString'
+- variant B (uint): TypeError: failed to extract field Bar::B.0, caused by TypeError: 'dict' object cannot be interpreted as an integer
+- variant C (int): TypeError: failed to extract field Bar::C.0, caused by TypeError: 'dict' object cannot be interpreted as an integer"
         );
     });
 }
@@ -500,7 +515,24 @@ fn test_from_py_with_tuple_struct() {
     });
 }
 
-#[derive(Debug, FromPyObject, PartialEq)]
+#[test]
+fn test_from_py_with_tuple_struct_error() {
+    Python::with_gil(|py| {
+        let py_zap = py
+            .eval(r#"("whatever", [1, 2, 3], "third")"#, None, None)
+            .expect("failed to create tuple");
+
+        let f = ZapTuple::extract(py_zap);
+
+        assert!(f.is_err());
+        assert_eq!(
+            f.unwrap_err().to_string(),
+            "ValueError: expected tuple of length 2, but got tuple of length 3"
+        );
+    });
+}
+
+#[derive(Debug, FromPyObject, PartialEq, Eq)]
 pub enum ZapEnum {
     Zip(#[pyo3(from_py_with = "PyAny::len")] usize),
     Zap(String, #[pyo3(from_py_with = "PyAny::len")] usize),
@@ -514,8 +546,25 @@ fn test_from_py_with_enum() {
             .expect("failed to create tuple");
 
         let zap = ZapEnum::extract(py_zap).unwrap();
-        let expected_zap = ZapEnum::Zap(String::from("whatever"), 3usize);
+        let expected_zap = ZapEnum::Zip(2);
 
         assert_eq!(zap, expected_zap);
+    });
+}
+
+#[derive(Debug, FromPyObject, PartialEq, Eq)]
+#[pyo3(transparent)]
+pub struct TransparentFromPyWith {
+    #[pyo3(from_py_with = "PyAny::len")]
+    len: usize,
+}
+
+#[test]
+fn test_transparent_from_py_with() {
+    Python::with_gil(|py| {
+        let result = TransparentFromPyWith::extract(PyList::new(py, &[1, 2, 3])).unwrap();
+        let expected = TransparentFromPyWith { len: 3 };
+
+        assert_eq!(result, expected);
     });
 }

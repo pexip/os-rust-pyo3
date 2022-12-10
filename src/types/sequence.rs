@@ -1,11 +1,15 @@
 // Copyright (c) 2017-present PyO3 Project and Contributors
-
 use crate::err::{self, PyDowncastError, PyErr, PyResult};
+use crate::exceptions::PyValueError;
 use crate::internal_tricks::get_ssize_index;
-use crate::types::{PyAny, PyList, PyTuple};
-use crate::{ffi, PyNativeType};
-use crate::{AsPyPointer, IntoPyPointer, Py, Python};
-use crate::{FromPyObject, PyTryFrom, ToBorrowedObject};
+use crate::once_cell::GILOnceCell;
+use crate::type_object::PyTypeInfo;
+use crate::types::{PyAny, PyList, PyString, PyTuple, PyType};
+use crate::{ffi, PyNativeType, ToPyObject};
+use crate::{AsPyPointer, IntoPy, IntoPyPointer, Py, Python};
+use crate::{FromPyObject, PyTryFrom};
+
+static SEQUENCE_ABC: GILOnceCell<PyResult<Py<PyType>>> = GILOnceCell::new();
 
 /// Represents a reference to a Python object supporting the sequence protocol.
 #[repr(transparent)]
@@ -123,15 +127,18 @@ impl PySequence {
     #[inline]
     pub fn set_item<I>(&self, i: usize, item: I) -> PyResult<()>
     where
-        I: ToBorrowedObject,
+        I: ToPyObject,
     {
+        let py = self.py();
         unsafe {
-            item.with_borrowed_ptr(self.py(), |item| {
-                err::error_on_minusone(
-                    self.py(),
-                    ffi::PySequence_SetItem(self.as_ptr(), get_ssize_index(i), item),
-                )
-            })
+            err::error_on_minusone(
+                py,
+                ffi::PySequence_SetItem(
+                    self.as_ptr(),
+                    get_ssize_index(i),
+                    item.to_object(py).as_ptr(),
+                ),
+            )
         }
     }
 
@@ -185,11 +192,10 @@ impl PySequence {
     #[cfg(not(PyPy))]
     pub fn count<V>(&self, value: V) -> PyResult<usize>
     where
-        V: ToBorrowedObject,
+        V: ToPyObject,
     {
-        let r = value.with_borrowed_ptr(self.py(), |ptr| unsafe {
-            ffi::PySequence_Count(self.as_ptr(), ptr)
-        });
+        let r =
+            unsafe { ffi::PySequence_Count(self.as_ptr(), value.to_object(self.py()).as_ptr()) };
         if r == -1 {
             Err(PyErr::fetch(self.py()))
         } else {
@@ -203,11 +209,10 @@ impl PySequence {
     #[inline]
     pub fn contains<V>(&self, value: V) -> PyResult<bool>
     where
-        V: ToBorrowedObject,
+        V: ToPyObject,
     {
-        let r = value.with_borrowed_ptr(self.py(), |ptr| unsafe {
-            ffi::PySequence_Contains(self.as_ptr(), ptr)
-        });
+        let r =
+            unsafe { ffi::PySequence_Contains(self.as_ptr(), value.to_object(self.py()).as_ptr()) };
         match r {
             0 => Ok(false),
             1 => Ok(true),
@@ -221,11 +226,10 @@ impl PySequence {
     #[inline]
     pub fn index<V>(&self, value: V) -> PyResult<usize>
     where
-        V: ToBorrowedObject,
+        V: ToPyObject,
     {
-        let r = value.with_borrowed_ptr(self.py(), |ptr| unsafe {
-            ffi::PySequence_Index(self.as_ptr(), ptr)
-        });
+        let r =
+            unsafe { ffi::PySequence_Index(self.as_ptr(), value.to_object(self.py()).as_ptr()) };
         if r == -1 {
             Err(PyErr::fetch(self.py()))
         } else {
@@ -250,6 +254,15 @@ impl PySequence {
                 .from_owned_ptr_or_err(ffi::PySequence_Tuple(self.as_ptr()))
         }
     }
+
+    /// Register a pyclass as a subclass of `collections.abc.Sequence` (from the Python standard
+    /// library). This is equvalent to `collections.abc.Sequence.register(T)` in Python.
+    /// This registration is required for a pyclass to be downcastable from `PyAny` to `PySequence`.
+    pub fn register<T: PyTypeInfo>(py: Python<'_>) -> PyResult<()> {
+        let ty = T::type_object(py);
+        get_sequence_abc(py)?.call_method1("register", (ty,))?;
+        Ok(())
+    }
 }
 
 #[inline]
@@ -270,6 +283,9 @@ where
     T: FromPyObject<'a>,
 {
     fn extract(obj: &'a PyAny) -> PyResult<Self> {
+        if let Ok(true) = obj.is_instance_of::<PyString>() {
+            return Err(PyValueError::new_err("Can't extract `str` to `Vec`"));
+        }
         extract_sequence(obj)
     }
 }
@@ -278,24 +294,51 @@ fn extract_sequence<'s, T>(obj: &'s PyAny) -> PyResult<Vec<T>>
 where
     T: FromPyObject<'s>,
 {
-    let seq = <PySequence as PyTryFrom>::try_from(obj)?;
-    let mut v = Vec::with_capacity(seq.len().unwrap_or(0) as usize);
+    // Types that pass `PySequence_Check` usually implement enough of the sequence protocol
+    // to support this function and if not, we will only fail extraction safely.
+    let seq = unsafe {
+        if ffi::PySequence_Check(obj.as_ptr()) != 0 {
+            <PySequence as PyTryFrom>::try_from_unchecked(obj)
+        } else {
+            return Err(PyDowncastError::new(obj, "Sequence").into());
+        }
+    };
+
+    let mut v = Vec::with_capacity(seq.len().unwrap_or(0));
     for item in seq.iter()? {
         v.push(item?.extract::<T>()?);
     }
     Ok(v)
 }
 
+fn get_sequence_abc(py: Python<'_>) -> Result<&PyType, PyErr> {
+    SEQUENCE_ABC
+        .get_or_init(py, || {
+            Ok(py
+                .import("collections.abc")?
+                .getattr("Sequence")?
+                .downcast::<PyType>()?
+                .into_py(py))
+        })
+        .as_ref()
+        .map_or_else(|e| Err(e.clone_ref(py)), |t| Ok(t.as_ref(py)))
+}
+
 impl<'v> PyTryFrom<'v> for PySequence {
+    /// Downcasting to `PySequence` requires the concrete class to be a subclass (or registered
+    /// subclass) of `collections.abc.Sequence` (from the Python standard library) - i.e.
+    /// `isinstance(<class>, collections.abc.Sequence) == True`.
     fn try_from<V: Into<&'v PyAny>>(value: V) -> Result<&'v PySequence, PyDowncastError<'v>> {
         let value = value.into();
-        unsafe {
-            if ffi::PySequence_Check(value.as_ptr()) != 0 {
-                Ok(<PySequence as PyTryFrom>::try_from_unchecked(value))
-            } else {
-                Err(PyDowncastError::new(value, "Sequence"))
+
+        // TODO: surface specific errors in this chain to the user
+        if let Ok(abc) = get_sequence_abc(value.py()) {
+            if value.is_instance(abc).unwrap_or(false) {
+                unsafe { return Ok(<PySequence as PyTryFrom>::try_from_unchecked(value)) }
             }
         }
+
+        Err(PyDowncastError::new(value, "Sequence"))
     }
 
     fn try_from_exact<V: Into<&'v PyAny>>(value: V) -> Result<&'v PySequence, PyDowncastError<'v>> {
@@ -364,6 +407,19 @@ mod tests {
             assert!(<PySequence as PyTryFrom>::try_from(v.to_object(py).as_ref(py)).is_ok());
         });
     }
+
+    #[test]
+    fn test_strings_cannot_be_extracted_to_vec() {
+        Python::with_gil(|py| {
+            let v = "London Calling";
+            let ob = v.to_object(py);
+
+            assert!(ob.extract::<Vec<&str>>(py).is_err());
+            assert!(ob.extract::<Vec<String>>(py).is_err());
+            assert!(ob.extract::<Vec<char>>(py).is_err());
+        });
+    }
+
     #[test]
     fn test_seq_empty() {
         Python::with_gil(|py| {

@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for your interest in contributing to PyO3! All are welcome - please consider reading our [Code of Conduct](Code-of-Conduct.md) to keep our community positive and inclusive.
+Thank you for your interest in contributing to PyO3! All are welcome - please consider reading our [Code of Conduct](https://github.com/PyO3/pyo3/blob/main/Code-of-Conduct.md) to keep our community positive and inclusive.
 
 If you are searching for ideas how to contribute, proceed to the ["Getting started contributing"](#getting-started-contributing) section. If you have found a specific issue to contribute to and need information about the development process, you may find the section ["Writing pull requests"](#writing-pull-requests) helpful.
 
@@ -11,7 +11,7 @@ If you want to become familiar with the codebase, see
 
 Please join in with any part of PyO3 which interests you. We use GitHub issues to record all bugs and ideas. Feel free to request an issue to be assigned to you if you want to work on it.
 
-You can browse the API of the non-public parts of PyO3 [here](https://pyo3.rs/internal/doc/pyo3/index.html).
+You can browse the API of the non-public parts of PyO3 [here](https://pyo3.netlify.app/internal/doc/pyo3/index.html).
 
 The following sections also contain specific ideas on where to start contributing to PyO3.
 
@@ -21,6 +21,7 @@ To work and develop PyO3, you need Python & Rust installed on your system.
 * We encourage the use of [rustup](https://rustup.rs/) to be able to select and choose specific toolchains based on the project.
 * [Pyenv](https://github.com/pyenv/pyenv) is also highly recommended for being able to choose a specific Python version.
 * [virtualenv](https://virtualenv.pypa.io/en/latest/) can also be used with or without Pyenv to use specific installed Python versions.
+* [`nox`][nox] is used to automate many of our CI tasks.
 
 ### Caveats
 
@@ -48,7 +49,10 @@ There are some specific areas of focus where help is currently needed for the do
 - Not all APIs had docs or examples when they were made. The goal is to have documentation on all PyO3 APIs ([#306](https://github.com/PyO3/pyo3/issues/306)). If you see an API lacking a doc, please write one and open a PR!
 
 You can build the docs (including all features) with
-```cargo xtask doc --open```
+
+```shell
+cargo xtask doc --open
+```
 
 #### Doctests
 
@@ -60,8 +64,11 @@ https://doc.rust-lang.org/rustdoc/documentation-tests.html for a guide on doctes
 
 You can preview the user guide by building it locally with `mdbook`.
 
-First, [install `mdbook`](https://rust-lang.github.io/mdBook/cli/index.html). Then, run
-```mdbook build -d ../gh-pages-build guide --open```
+First, install [`mdbook`][mdbook] and [`nox`][nox]. Then, run
+
+```shell
+nox -s build-guide -- --open
+```
 
 ### Help design the next PyO3
 
@@ -89,7 +96,18 @@ If you are adding a new feature, you should add it to the `full` feature in our 
 
 You can run these tests yourself with
 ```cargo xtask ci```
-See [it's documentation](https://github.com/PyO3/pyo3/tree/main/xtask#readme)for more commands you can run.
+See [its documentation](https://github.com/PyO3/pyo3/tree/main/xtask#readme) for more commands you can run.
+
+### Documenting changes
+
+We use [towncrier](https://towncrier.readthedocs.io/en/stable/index.html) to generate a CHANGELOG for each release.
+
+To include your changes in the release notes, you should create one (or more) news items in the `newsfragments` directory. Valid news items should be saved as `<PR>.<CATEGORY>.md` where `<PR>` is the pull request number and `<CATEGORY>` is one of the following:
+- `packaging` - for dependency changes and Python / Rust version compatibility changes
+- `added` - for new features
+- `changed` - for features which already existed but have been altered or deprecated
+- `removed` - for features which have been removed
+- `fixed` - for "changed" features which were classed as a bugfix
 
 ## Python and Rust version support policy
 
@@ -121,6 +139,29 @@ First, there are Rust-based benchmarks located in the `benches` subdirectory. As
 
 Second, there is a Python-based benchmark contained in the `pytests` subdirectory. You can read more about it [here](pytests).
 
+## Code coverage
+
+You can view what code is and isn't covered by PyO3's tests. We aim to have 100% coverage - please check coverage and add tests if you notice a lack of coverage!
+
+- First, generate a `lcov.info` file with
+```shell
+cargo xtask coverage
+```
+You can install an IDE plugin to view the coverage. For example, if you use VSCode:
+- Add the [coverage-gutters](https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters) plugin.
+- Add these settings to VSCode's `settings.json`:
+```json
+{
+    "coverage-gutters.coverageFileNames": [
+        "lcov.info",
+        "cov.xml",
+        "coverage.xml",
+    ],
+    "coverage-gutters.showLineCoverage": true
+}
+```
+- You should now be able to see green highlights for code that is tested, and red highlights for code that is not tested.
+
 ## Sponsor this project
 
 At the moment there is no official organisation that accepts sponsorship on PyO3's behalf. If you're seeking to provide significant funding to the PyO3 ecosystem, please reach out to us on [GitHub](https://github.com/PyO3/pyo3/issues/new) or [Gitter](https://gitter.im/PyO3/Lobby) and we can discuss.
@@ -128,3 +169,7 @@ At the moment there is no official organisation that accepts sponsorship on PyO3
 In the meanwhile, some of our maintainers have personal GitHub sponsorship pages and would be grateful for your support:
 
 - [davidhewitt](https://github.com/sponsors/davidhewitt)
+- [messense](https://github.com/sponsors/messense)
+
+[mdbook]: https://rust-lang.github.io/mdBook/cli/index.html
+[nox]: https://github.com/theacodes/nox

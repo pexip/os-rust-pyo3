@@ -1,5 +1,5 @@
 use crate::internal_tricks::{extract_cstr_or_leak_cstring, NulByteInString};
-use crate::{ffi, AsPyPointer, FromPyObject, PyAny, PyObject, PyResult, Python};
+use crate::{ffi, AsPyPointer, PyAny, PyObject, PyResult, Python};
 use std::ffi::CStr;
 use std::fmt;
 use std::os::raw::{c_int, c_void};
@@ -25,14 +25,14 @@ pub type ipowfunc = unsafe extern "C" fn(
 impl IPowModulo {
     #[cfg(Py_3_8)]
     #[inline]
-    pub fn extract<'a, T: FromPyObject<'a>>(self, py: Python<'a>) -> PyResult<T> {
-        unsafe { py.from_borrowed_ptr::<PyAny>(self.0) }.extract()
+    pub fn to_borrowed_any(self, py: Python<'_>) -> &PyAny {
+        unsafe { py.from_borrowed_ptr::<PyAny>(self.0) }
     }
 
     #[cfg(not(Py_3_8))]
     #[inline]
-    pub fn extract<'a, T: FromPyObject<'a>>(self, py: Python<'a>) -> PyResult<T> {
-        unsafe { py.from_borrowed_ptr::<PyAny>(ffi::Py_None()) }.extract()
+    pub fn to_borrowed_any(self, py: Python<'_>) -> &PyAny {
+        unsafe { py.from_borrowed_ptr::<PyAny>(ffi::Py_None()) }
     }
 }
 
@@ -76,7 +76,7 @@ pub struct PyGetter(pub ffi::getter);
 #[derive(Clone, Copy, Debug)]
 pub struct PySetter(pub ffi::setter);
 #[derive(Clone, Copy)]
-pub struct PyClassAttributeFactory(pub for<'p> fn(Python<'p>) -> PyObject);
+pub struct PyClassAttributeFactory(pub for<'p> fn(Python<'p>) -> PyResult<PyObject>);
 
 // TODO: it would be nice to use CStr in these types, but then the constructors can't be const fn
 // until `CStr::from_bytes_with_nul_unchecked` is const fn.

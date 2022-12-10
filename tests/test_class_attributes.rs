@@ -1,6 +1,6 @@
 #![cfg(feature = "macros")]
 
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 mod common;
 
@@ -45,18 +45,24 @@ impl Foo {
     fn a_foo() -> Foo {
         Foo { x: 1 }
     }
+
+    #[classattr]
+    fn a_foo_with_py(py: Python<'_>) -> Py<Foo> {
+        Py::new(py, Foo { x: 1 }).unwrap()
+    }
 }
 
 #[test]
 fn class_attributes() {
-    let gil = Python::acquire_gil();
-    let py = gil.python();
-    let foo_obj = py.get_type::<Foo>();
-    py_assert!(py, foo_obj, "foo_obj.MY_CONST == 'foobar'");
-    py_assert!(py, foo_obj, "foo_obj.RENAMED_CONST == 'foobar_2'");
-    py_assert!(py, foo_obj, "foo_obj.a == 5");
-    py_assert!(py, foo_obj, "foo_obj.B == 'bar'");
-    py_assert!(py, foo_obj, "foo_obj.a_foo.x == 1");
+    Python::with_gil(|py| {
+        let foo_obj = py.get_type::<Foo>();
+        py_assert!(py, foo_obj, "foo_obj.MY_CONST == 'foobar'");
+        py_assert!(py, foo_obj, "foo_obj.RENAMED_CONST == 'foobar_2'");
+        py_assert!(py, foo_obj, "foo_obj.a == 5");
+        py_assert!(py, foo_obj, "foo_obj.B == 'bar'");
+        py_assert!(py, foo_obj, "foo_obj.a_foo.x == 1");
+        py_assert!(py, foo_obj, "foo_obj.a_foo_with_py.x == 1");
+    });
 }
 
 // Ignored because heap types are not immutable:
@@ -64,10 +70,10 @@ fn class_attributes() {
 #[test]
 #[ignore]
 fn class_attributes_are_immutable() {
-    let gil = Python::acquire_gil();
-    let py = gil.python();
-    let foo_obj = py.get_type::<Foo>();
-    py_expect_exception!(py, foo_obj, "foo_obj.a = 6", PyTypeError);
+    Python::with_gil(|py| {
+        let foo_obj = py.get_type::<Foo>();
+        py_expect_exception!(py, foo_obj, "foo_obj.a = 6", PyTypeError);
+    });
 }
 
 #[pymethods]
@@ -80,12 +86,33 @@ impl Bar {
 
 #[test]
 fn recursive_class_attributes() {
-    let gil = Python::acquire_gil();
-    let py = gil.python();
+    Python::with_gil(|py| {
+        let foo_obj = py.get_type::<Foo>();
+        let bar_obj = py.get_type::<Bar>();
+        py_assert!(py, foo_obj, "foo_obj.a_foo.x == 1");
+        py_assert!(py, foo_obj, "foo_obj.bar.x == 2");
+        py_assert!(py, bar_obj, "bar_obj.a_foo.x == 3");
+    });
+}
 
-    let foo_obj = py.get_type::<Foo>();
-    let bar_obj = py.get_type::<Bar>();
-    py_assert!(py, foo_obj, "foo_obj.a_foo.x == 1");
-    py_assert!(py, foo_obj, "foo_obj.bar.x == 2");
-    py_assert!(py, bar_obj, "bar_obj.a_foo.x == 3");
+#[test]
+#[should_panic(
+    expected = "An error occurred while initializing `BrokenClass.fails_to_init`: \
+                ValueError: failed to create class attribute"
+)]
+fn test_fallible_class_attribute() {
+    #[pyclass]
+    struct BrokenClass;
+
+    #[pymethods]
+    impl BrokenClass {
+        #[classattr]
+        fn fails_to_init() -> PyResult<i32> {
+            Err(PyValueError::new_err("failed to create class attribute"))
+        }
+    }
+
+    Python::with_gil(|py| {
+        py.get_type::<BrokenClass>();
+    })
 }

@@ -7,7 +7,7 @@ use crate::internal_tricks::get_ssize_index;
 use crate::types::PySequence;
 use crate::{
     exceptions, AsPyPointer, FromPyObject, IntoPy, IntoPyPointer, Py, PyAny, PyErr, PyObject,
-    PyResult, PyTryFrom, Python, ToBorrowedObject, ToPyObject,
+    PyResult, PyTryFrom, Python, ToPyObject,
 };
 
 #[inline]
@@ -136,34 +136,6 @@ impl PyTuple {
         }
     }
 
-    #[deprecated(since = "0.15.0", note = "use self.get_slice instead")]
-    /// Takes the slice `self[low:high]` and returns it as a new tuple.
-    ///
-    /// Indices must be nonnegative, and out-of-range indices are clipped to
-    /// `self.len()`.
-    pub fn slice(&self, low: isize, high: isize) -> &PyTuple {
-        unsafe {
-            self.py()
-                .from_owned_ptr(ffi::PyTuple_GetSlice(self.as_ptr(), low, high))
-        }
-    }
-
-    #[deprecated(
-        since = "0.15.0",
-        note = "use tuple.get_slice(low, tuple.len()) instead"
-    )]
-    /// Takes a slice of the tuple from `low` to the end and returns it as a new tuple.
-    pub fn split_from(&self, low: usize) -> &PyTuple {
-        unsafe {
-            let ptr = ffi::PyTuple_GetSlice(
-                self.as_ptr(),
-                get_ssize_index(low),
-                self.len() as Py_ssize_t,
-            );
-            self.py().from_owned_ptr(ptr)
-        }
-    }
-
     /// Gets the tuple item at the specified index.
     /// # Example
     /// ```
@@ -215,7 +187,7 @@ impl PyTuple {
     #[inline]
     pub fn contains<V>(&self, value: V) -> PyResult<bool>
     where
-        V: ToBorrowedObject,
+        V: ToPyObject,
     {
         self.as_sequence().contains(value)
     }
@@ -226,7 +198,7 @@ impl PyTuple {
     #[inline]
     pub fn index<V>(&self, value: V) -> PyResult<usize>
     where
-        V: ToBorrowedObject,
+        V: ToPyObject,
     {
         self.as_sequence().index(value)
     }
@@ -269,16 +241,14 @@ impl<'a> Iterator for PyTupleIterator<'a> {
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (
-            self.length.saturating_sub(self.index as usize),
-            Some(self.length.saturating_sub(self.index as usize)),
-        )
+        let len = self.len();
+        (len, Some(len))
     }
 }
 
 impl<'a> ExactSizeIterator for PyTupleIterator<'a> {
     fn len(&self) -> usize {
-        self.length - self.index
+        self.length.saturating_sub(self.index)
     }
 }
 
@@ -291,9 +261,10 @@ impl<'a> IntoIterator for &'a PyTuple {
     }
 }
 
+#[cold]
 fn wrong_tuple_length(t: &PyTuple, expected_length: usize) -> PyErr {
     let msg = format!(
-        "Expected tuple of length {}, but got tuple of length {}.",
+        "expected tuple of length {}, but got tuple of length {}",
         expected_length,
         t.len()
     );
@@ -507,13 +478,13 @@ mod tests {
 
             assert_eq!(iter.size_hint(), (3, Some(3)));
 
-            assert_eq!(1, iter.next().unwrap().extract().unwrap());
+            assert_eq!(1_i32, iter.next().unwrap().extract::<'_, i32>().unwrap());
             assert_eq!(iter.size_hint(), (2, Some(2)));
 
-            assert_eq!(2, iter.next().unwrap().extract().unwrap());
+            assert_eq!(2_i32, iter.next().unwrap().extract::<'_, i32>().unwrap());
             assert_eq!(iter.size_hint(), (1, Some(1)));
 
-            assert_eq!(3, iter.next().unwrap().extract().unwrap());
+            assert_eq!(3_i32, iter.next().unwrap().extract::<'_, i32>().unwrap());
             assert_eq!(iter.size_hint(), (0, Some(0)));
         });
     }
@@ -526,7 +497,7 @@ mod tests {
             assert_eq!(3, tuple.len());
 
             for (i, item) in tuple.iter().enumerate() {
-                assert_eq!(i + 1, item.extract().unwrap());
+                assert_eq!(i + 1, item.extract::<'_, usize>().unwrap());
             }
         });
     }
@@ -540,9 +511,9 @@ mod tests {
 
             let slice = tuple.as_slice();
             assert_eq!(3, slice.len());
-            assert_eq!(1, slice[0].extract().unwrap());
-            assert_eq!(2, slice[1].extract().unwrap());
-            assert_eq!(3, slice[2].extract().unwrap());
+            assert_eq!(1_i32, slice[0].extract::<'_, i32>().unwrap());
+            assert_eq!(2_i32, slice[1].extract::<'_, i32>().unwrap());
+            assert_eq!(3_i32, slice[2].extract::<'_, i32>().unwrap());
         });
     }
 

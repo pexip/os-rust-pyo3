@@ -9,8 +9,7 @@ use crate::ffi::{self, Py_ssize_t};
 use crate::internal_tricks::get_ssize_index;
 use crate::types::PySequence;
 use crate::{
-    AsPyPointer, IntoPy, IntoPyPointer, Py, PyAny, PyObject, PyTryFrom, Python, ToBorrowedObject,
-    ToPyObject,
+    AsPyPointer, IntoPy, IntoPyPointer, Py, PyAny, PyObject, PyTryFrom, Python, ToPyObject,
 };
 
 /// Represents a Python `list`.
@@ -34,8 +33,9 @@ fn new_from_iter(
 
         let ptr = ffi::PyList_New(len);
 
-        // - Panics if the ptr is null
-        // - Cleans up the list if `convert` or the asserts panic
+        // We create the  `Py` pointer here for two reasons:
+        // - panics if the ptr is null
+        // - its Drop cleans up the list if user code or the asserts panic.
         let list: Py<PyList> = Py::from_owned_ptr(py, ptr);
 
         let mut counter: Py_ssize_t = 0;
@@ -222,11 +222,15 @@ impl PyList {
     /// Appends an item to the list.
     pub fn append<I>(&self, item: I) -> PyResult<()>
     where
-        I: ToBorrowedObject,
+        I: ToPyObject,
     {
-        item.with_borrowed_ptr(self.py(), |item| unsafe {
-            err::error_on_minusone(self.py(), ffi::PyList_Append(self.as_ptr(), item))
-        })
+        let py = self.py();
+        unsafe {
+            err::error_on_minusone(
+                py,
+                ffi::PyList_Append(self.as_ptr(), item.to_object(py).as_ptr()),
+            )
+        }
     }
 
     /// Inserts an item at the specified index.
@@ -234,14 +238,19 @@ impl PyList {
     /// If `index >= self.len()`, inserts at the end.
     pub fn insert<I>(&self, index: usize, item: I) -> PyResult<()>
     where
-        I: ToBorrowedObject,
+        I: ToPyObject,
     {
-        item.with_borrowed_ptr(self.py(), |item| unsafe {
+        let py = self.py();
+        unsafe {
             err::error_on_minusone(
-                self.py(),
-                ffi::PyList_Insert(self.as_ptr(), get_ssize_index(index), item),
+                py,
+                ffi::PyList_Insert(
+                    self.as_ptr(),
+                    get_ssize_index(index),
+                    item.to_object(py).as_ptr(),
+                ),
             )
-        })
+        }
     }
 
     /// Determines if self contains `value`.
@@ -250,7 +259,7 @@ impl PyList {
     #[inline]
     pub fn contains<V>(&self, value: V) -> PyResult<bool>
     where
-        V: ToBorrowedObject,
+        V: ToPyObject,
     {
         self.as_sequence().contains(value)
     }
@@ -261,7 +270,7 @@ impl PyList {
     #[inline]
     pub fn index<V>(&self, value: V) -> PyResult<usize>
     where
-        V: ToBorrowedObject,
+        V: ToPyObject,
     {
         self.as_sequence().index(value)
     }
@@ -312,12 +321,14 @@ impl<'a> Iterator for PyListIterator<'a> {
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.list.len();
+        let len = self.len();
+        (len, Some(len))
+    }
+}
 
-        (
-            len.saturating_sub(self.index),
-            Some(len.saturating_sub(self.index)),
-        )
+impl<'a> ExactSizeIterator for PyListIterator<'a> {
+    fn len(&self) -> usize {
+        self.list.len().saturating_sub(self.index)
     }
 }
 

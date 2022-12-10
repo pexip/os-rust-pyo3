@@ -4,11 +4,14 @@ use crate::impl_::pyclass::{PyClassBaseType, PyClassDict, PyClassThreadChecker, 
 use crate::{ffi, PyCell, PyClass, PyErr, PyResult, Python};
 use crate::{
     ffi::PyTypeObject,
-    pycell::{BorrowFlag, PyCellContents},
+    pycell::{
+        impl_::{PyClassBorrowChecker, PyClassMutability},
+        PyCellContents,
+    },
     type_object::{get_tp_alloc, PyTypeInfo},
 };
 use std::{
-    cell::{Cell, UnsafeCell},
+    cell::UnsafeCell,
     marker::PhantomData,
     mem::{ManuallyDrop, MaybeUninit},
 };
@@ -37,43 +40,49 @@ impl<T: PyTypeInfo> PyObjectInit<T> for PyNativeTypeInitializer<T> {
         py: Python<'_>,
         subtype: *mut PyTypeObject,
     ) -> PyResult<*mut ffi::PyObject> {
-        let type_object = T::type_object_raw(py);
+        unsafe fn inner(
+            py: Python<'_>,
+            type_object: *mut PyTypeObject,
+            subtype: *mut PyTypeObject,
+        ) -> PyResult<*mut ffi::PyObject> {
+            // HACK (due to FIXME below): PyBaseObject_Type's tp_new isn't happy with NULL arguments
+            #[cfg(addr_of)]
+            let is_base_object = type_object == std::ptr::addr_of_mut!(ffi::PyBaseObject_Type);
+            #[cfg(not(addr_of))]
+            let is_base_object = type_object == &mut ffi::PyBaseObject_Type as _;
+            if is_base_object {
+                let alloc = get_tp_alloc(subtype).unwrap_or(ffi::PyType_GenericAlloc);
+                let obj = alloc(subtype, 0);
+                return if obj.is_null() {
+                    Err(PyErr::fetch(py))
+                } else {
+                    Ok(obj)
+                };
+            }
 
-        // HACK (due to FIXME below): PyBaseObject_Type's tp_new isn't happy with NULL arguments
-        #[cfg(addr_of)]
-        let is_base_object = type_object == std::ptr::addr_of_mut!(ffi::PyBaseObject_Type);
-        #[cfg(not(addr_of))]
-        let is_base_object = type_object == &mut ffi::PyBaseObject_Type as _;
-        if is_base_object {
-            let alloc = get_tp_alloc(subtype).unwrap_or(ffi::PyType_GenericAlloc);
-            let obj = alloc(subtype, 0);
-            return if obj.is_null() {
-                Err(PyErr::fetch(py))
-            } else {
-                Ok(obj)
-            };
-        }
+            #[cfg(Py_LIMITED_API)]
+            unreachable!("subclassing native types is not possible with the `abi3` feature");
 
-        #[cfg(Py_LIMITED_API)]
-        unreachable!("subclassing native types is not possible with the `abi3` feature");
-
-        #[cfg(not(Py_LIMITED_API))]
-        {
-            match (*type_object).tp_new {
-                // FIXME: Call __new__ with actual arguments
-                Some(newfunc) => {
-                    let obj = newfunc(subtype, std::ptr::null_mut(), std::ptr::null_mut());
-                    if obj.is_null() {
-                        Err(PyErr::fetch(py))
-                    } else {
-                        Ok(obj)
+            #[cfg(not(Py_LIMITED_API))]
+            {
+                match (*type_object).tp_new {
+                    // FIXME: Call __new__ with actual arguments
+                    Some(newfunc) => {
+                        let obj = newfunc(subtype, std::ptr::null_mut(), std::ptr::null_mut());
+                        if obj.is_null() {
+                            Err(PyErr::fetch(py))
+                        } else {
+                            Ok(obj)
+                        }
                     }
+                    None => Err(crate::exceptions::PyTypeError::new_err(
+                        "base type without tp_new",
+                    )),
                 }
-                None => Err(crate::exceptions::PyTypeError::new_err(
-                    "base type without tp_new",
-                )),
             }
         }
+        let type_object = T::type_object_raw(py);
+        inner(py, type_object, subtype)
     }
 
     private_impl! {}
@@ -81,7 +90,7 @@ impl<T: PyTypeInfo> PyObjectInit<T> for PyNativeTypeInitializer<T> {
 
 /// Initializer for our `#[pyclass]` system.
 ///
-/// You can use this type to initalize complicatedly nested `#[pyclass]`.
+/// You can use this type to initialize complicatedly nested `#[pyclass]`.
 ///
 /// # Examples
 ///
@@ -228,14 +237,6 @@ impl<T: PyClass> PyObjectInit<T> for PyClassInitializer<T> {
         py: Python<'_>,
         subtype: *mut PyTypeObject,
     ) -> PyResult<*mut ffi::PyObject> {
-        /// Layout of a PyCellBase after base new has been called, but the borrow flag has not
-        /// yet been initialized.
-        #[repr(C)]
-        struct PartiallyInitializedPyCellBase<T> {
-            _ob_base: T,
-            borrow_flag: MaybeUninit<Cell<BorrowFlag>>,
-        }
-
         /// Layout of a PyCell after base new has been called, but the contents have not yet been
         /// written.
         #[repr(C)]
@@ -244,25 +245,17 @@ impl<T: PyClass> PyObjectInit<T> for PyClassInitializer<T> {
             contents: MaybeUninit<PyCellContents<T>>,
         }
 
-        let Self { init, super_init } = self;
-        let obj = super_init.into_new_object(py, subtype)?;
+        let obj = self.super_init.into_new_object(py, subtype)?;
 
-        // FIXME: Only need to initialize borrow flag once per whole hierarchy
-        let base: *mut PartiallyInitializedPyCellBase<T::BaseNativeType> = obj as _;
-        std::ptr::write(
-            (*base).borrow_flag.as_mut_ptr(),
-            Cell::new(BorrowFlag::UNUSED),
-        );
-
-        // FIXME: Initialize borrow flag if necessary??
         let cell: *mut PartiallyInitializedPyCell<T> = obj as _;
         std::ptr::write(
             (*cell).contents.as_mut_ptr(),
             PyCellContents {
-                value: ManuallyDrop::new(UnsafeCell::new(init)),
+                value: ManuallyDrop::new(UnsafeCell::new(self.init)),
+                borrow_checker: <T::PyClassMutability as PyClassMutability>::Storage::new(),
                 thread_checker: T::ThreadChecker::new(),
-                dict: T::Dict::new(),
-                weakref: T::WeakRef::new(),
+                dict: T::Dict::INIT,
+                weakref: T::WeakRef::INIT,
             },
         );
         Ok(obj)

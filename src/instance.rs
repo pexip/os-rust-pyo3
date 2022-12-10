@@ -1,9 +1,10 @@
+use crate::pyclass::boolean_struct::False;
 // Copyright (c) 2017-present PyO3 Project and Contributors
-use crate::conversion::{PyTryFrom, ToBorrowedObject};
+use crate::conversion::PyTryFrom;
 use crate::err::{self, PyDowncastError, PyErr, PyResult};
 use crate::gil;
 use crate::pycell::{PyBorrowError, PyBorrowMutError, PyCell};
-use crate::types::{PyDict, PyTuple};
+use crate::types::{PyDict, PyString, PyTuple};
 use crate::{
     ffi, AsPyPointer, FromPyObject, IntoPy, IntoPyPointer, PyAny, PyClass, PyClassInitializer,
     PyRef, PyRefMut, PyTypeInfo, Python, ToPyObject,
@@ -430,7 +431,10 @@ where
     /// # Panics
     /// Panics if the value is currently mutably borrowed. For a non-panicking variant, use
     /// [`try_borrow_mut`](#method.try_borrow_mut).
-    pub fn borrow_mut<'py>(&'py self, py: Python<'py>) -> PyRefMut<'py, T> {
+    pub fn borrow_mut<'py>(&'py self, py: Python<'py>) -> PyRefMut<'py, T>
+    where
+        T: PyClass<Frozen = False>,
+    {
         self.as_ref(py).borrow_mut()
     }
 
@@ -457,7 +461,10 @@ where
     pub fn try_borrow_mut<'py>(
         &'py self,
         py: Python<'py>,
-    ) -> Result<PyRefMut<'py, T>, PyBorrowMutError> {
+    ) -> Result<PyRefMut<'py, T>, PyBorrowMutError>
+    where
+        T: PyClass<Frozen = False>,
+    {
         self.as_ref(py).try_borrow_mut()
     }
 }
@@ -535,8 +542,9 @@ impl<T> Py<T> {
     ///
     /// This is equivalent to the Python expression `self.attr_name`.
     ///
-    /// If calling this method becomes performance-critical, the [`intern!`] macro can be used
-    /// to intern `attr_name`, thereby avoiding repeated temporary allocations of Python strings.
+    /// If calling this method becomes performance-critical, the [`intern!`](crate::intern) macro
+    /// can be used to intern `attr_name`, thereby avoiding repeated temporary allocations of
+    /// Python strings.
     ///
     /// # Example: `intern!`ing the attribute name
     ///
@@ -555,19 +563,24 @@ impl<T> Py<T> {
     /// ```
     pub fn getattr<N>(&self, py: Python<'_>, attr_name: N) -> PyResult<PyObject>
     where
-        N: ToPyObject,
+        N: IntoPy<Py<PyString>>,
     {
-        attr_name.with_borrowed_ptr(py, |attr_name| unsafe {
-            PyObject::from_owned_ptr_or_err(py, ffi::PyObject_GetAttr(self.as_ptr(), attr_name))
-        })
+        let attr_name = attr_name.into_py(py);
+
+        unsafe {
+            PyObject::from_owned_ptr_or_err(
+                py,
+                ffi::PyObject_GetAttr(self.as_ptr(), attr_name.as_ptr()),
+            )
+        }
     }
 
     /// Sets an attribute value.
     ///
     /// This is equivalent to the Python expression `self.attr_name = value`.
     ///
-    /// If calling this method becomes performance-critical, the [`intern!`] macro can be used
-    /// to intern `attr_name`, thereby avoiding repeated temporary allocations of Python strings.
+    /// To avoid repeated temporary allocations of Python strings, the [`intern!`](crate::intern)
+    /// macro can be used to intern `attr_name`.
     ///
     /// # Example: `intern!`ing the attribute name
     ///
@@ -586,14 +599,18 @@ impl<T> Py<T> {
     /// ```
     pub fn setattr<N, V>(&self, py: Python<'_>, attr_name: N, value: V) -> PyResult<()>
     where
-        N: ToPyObject,
-        V: ToPyObject,
+        N: IntoPy<Py<PyString>>,
+        V: IntoPy<Py<PyAny>>,
     {
-        attr_name.with_borrowed_ptr(py, move |attr_name| {
-            value.with_borrowed_ptr(py, |value| unsafe {
-                err::error_on_minusone(py, ffi::PyObject_SetAttr(self.as_ptr(), attr_name, value))
-            })
-        })
+        let attr_name = attr_name.into_py(py);
+        let value = value.into_py(py);
+
+        unsafe {
+            err::error_on_minusone(
+                py,
+                ffi::PyObject_SetAttr(self.as_ptr(), attr_name.as_ptr(), value.as_ptr()),
+            )
+        }
     }
 
     /// Calls the object.
@@ -605,16 +622,17 @@ impl<T> Py<T> {
         args: impl IntoPy<Py<PyTuple>>,
         kwargs: Option<&PyDict>,
     ) -> PyResult<PyObject> {
-        let args = args.into_py(py).into_ptr();
+        let args = args.into_py(py);
         let kwargs = kwargs.into_ptr();
-        let result = unsafe {
-            PyObject::from_owned_ptr_or_err(py, ffi::PyObject_Call(self.as_ptr(), args, kwargs))
-        };
+
         unsafe {
-            ffi::Py_XDECREF(args);
+            let ret = PyObject::from_owned_ptr_or_err(
+                py,
+                ffi::PyObject_Call(self.as_ptr(), args.as_ptr(), kwargs),
+            );
             ffi::Py_XDECREF(kwargs);
+            ret
         }
-        result
     }
 
     /// Calls the object with only positional arguments.
@@ -629,7 +647,10 @@ impl<T> Py<T> {
     /// This is equivalent to the Python expression `self()`.
     pub fn call0(&self, py: Python<'_>) -> PyResult<PyObject> {
         cfg_if::cfg_if! {
-            if #[cfg(all(Py_3_9, not(PyPy)))] {
+            if #[cfg(all(
+                not(PyPy),
+                any(Py_3_10, all(not(Py_LIMITED_API), Py_3_9)) // PyObject_CallNoArgs was added to python in 3.9 but to limited API in 3.10
+            ))] {
                 // Optimized path on python 3.9+
                 unsafe {
                     PyObject::from_owned_ptr_or_err(py, ffi::PyObject_CallNoArgs(self.as_ptr()))
@@ -643,49 +664,63 @@ impl<T> Py<T> {
     /// Calls a method on the object.
     ///
     /// This is equivalent to the Python expression `self.name(*args, **kwargs)`.
-    pub fn call_method(
+    ///
+    /// To avoid repeated temporary allocations of Python strings, the [`intern!`](crate::intern)
+    /// macro can be used to intern `name`.
+    pub fn call_method<N, A>(
         &self,
         py: Python<'_>,
-        name: &str,
-        args: impl IntoPy<Py<PyTuple>>,
+        name: N,
+        args: A,
         kwargs: Option<&PyDict>,
-    ) -> PyResult<PyObject> {
-        name.with_borrowed_ptr(py, |name| unsafe {
-            let args = args.into_py(py).into_ptr();
-            let kwargs = kwargs.into_ptr();
-            let ptr = ffi::PyObject_GetAttr(self.as_ptr(), name);
-            if ptr.is_null() {
-                return Err(PyErr::fetch(py));
-            }
-            let result = PyObject::from_owned_ptr_or_err(py, ffi::PyObject_Call(ptr, args, kwargs));
-            ffi::Py_DECREF(ptr);
-            ffi::Py_XDECREF(args);
+    ) -> PyResult<PyObject>
+    where
+        N: IntoPy<Py<PyString>>,
+        A: IntoPy<Py<PyTuple>>,
+    {
+        let callee = self.getattr(py, name)?;
+        let args: Py<PyTuple> = args.into_py(py);
+        let kwargs = kwargs.into_ptr();
+
+        unsafe {
+            let result = PyObject::from_owned_ptr_or_err(
+                py,
+                ffi::PyObject_Call(callee.as_ptr(), args.as_ptr(), kwargs),
+            );
             ffi::Py_XDECREF(kwargs);
             result
-        })
+        }
     }
 
     /// Calls a method on the object with only positional arguments.
     ///
     /// This is equivalent to the Python expression `self.name(*args)`.
-    pub fn call_method1(
-        &self,
-        py: Python<'_>,
-        name: &str,
-        args: impl IntoPy<Py<PyTuple>>,
-    ) -> PyResult<PyObject> {
+    ///
+    /// To avoid repeated temporary allocations of Python strings, the [`intern!`](crate::intern)
+    /// macro can be used to intern `name`.
+    pub fn call_method1<N, A>(&self, py: Python<'_>, name: N, args: A) -> PyResult<PyObject>
+    where
+        N: IntoPy<Py<PyString>>,
+        A: IntoPy<Py<PyTuple>>,
+    {
         self.call_method(py, name, args, None)
     }
 
     /// Calls a method on the object with no arguments.
     ///
     /// This is equivalent to the Python expression `self.name()`.
-    pub fn call_method0(&self, py: Python<'_>, name: &str) -> PyResult<PyObject> {
+    ///
+    /// To avoid repeated temporary allocations of Python strings, the [`intern!`](crate::intern)
+    /// macro can be used to intern `name`.
+    pub fn call_method0<N>(&self, py: Python<'_>, name: N) -> PyResult<PyObject>
+    where
+        N: IntoPy<Py<PyString>>,
+    {
         cfg_if::cfg_if! {
             if #[cfg(all(Py_3_9, not(any(Py_LIMITED_API, PyPy))))] {
                 // Optimized path on python 3.9+
                 unsafe {
-                    let name = name.into_py(py);
+                    let name: Py<PyString> = name.into_py(py);
                     PyObject::from_owned_ptr_or_err(py, ffi::PyObject_CallMethodNoArgs(self.as_ptr(), name.as_ptr()))
                 }
             } else {
@@ -714,7 +749,7 @@ impl<T> Py<T> {
 
     /// Create a `Py<T>` instance by taking ownership of the given FFI pointer.
     ///
-    /// If `ptr` is null then the current Python exception is fetched as a `PyErr`.
+    /// If `ptr` is null then the current Python exception is fetched as a [`PyErr`].
     ///
     /// # Safety
     /// If non-null, `ptr` must be a pointer to a Python object of type T.
@@ -877,7 +912,7 @@ where
 
 impl<'a, T> std::convert::From<PyRefMut<'a, T>> for Py<T>
 where
-    T: PyClass,
+    T: PyClass<Frozen = False>,
 {
     fn from(pyref: PyRefMut<'a, T>) -> Self {
         unsafe { Py::from_borrowed_ptr(pyref.py(), pyref.as_ptr()) }
@@ -920,9 +955,9 @@ where
     }
 }
 
-/// Py<T> can be used as an error when T is an Error.
+/// `Py<T>` can be used as an error when T is an Error.
 ///
-/// However for GIL lifetime reasons, cause() cannot be implemented for Py<T>.
+/// However for GIL lifetime reasons, cause() cannot be implemented for `Py<T>`.
 /// Use .as_ref() to get the GIL-scoped error if you need to inspect the cause.
 impl<T> std::error::Error for Py<T>
 where
@@ -971,8 +1006,8 @@ impl PyObject {
 #[cfg(test)]
 mod tests {
     use super::{Py, PyObject};
-    use crate::types::PyDict;
-    use crate::{Python, ToPyObject};
+    use crate::types::{PyDict, PyString};
+    use crate::{PyAny, PyResult, Python, ToPyObject};
 
     #[test]
     fn test_call0() {
@@ -1021,5 +1056,96 @@ mod tests {
             let p: PyObject = dict.into();
             assert_eq!(p.get_refcnt(py), cnt);
         });
+    }
+
+    #[test]
+    fn attr() -> PyResult<()> {
+        use crate::types::PyModule;
+
+        Python::with_gil(|py| {
+            const CODE: &str = r#"
+class A:
+    pass
+a = A()
+   "#;
+            let module = PyModule::from_code(py, CODE, "", "")?;
+            let instance: Py<PyAny> = module.getattr("a")?.into();
+
+            instance.getattr(py, "foo").unwrap_err();
+
+            instance.setattr(py, "foo", "bar")?;
+
+            assert!(instance
+                .getattr(py, "foo")?
+                .as_ref(py)
+                .eq(PyString::new(py, "bar"))?);
+
+            instance.getattr(py, "foo")?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn pystring_attr() -> PyResult<()> {
+        use crate::types::PyModule;
+
+        Python::with_gil(|py| {
+            const CODE: &str = r#"
+class A:
+    pass
+a = A()
+   "#;
+            let module = PyModule::from_code(py, CODE, "", "")?;
+            let instance: Py<PyAny> = module.getattr("a")?.into();
+
+            let foo = crate::intern!(py, "foo");
+            let bar = crate::intern!(py, "bar");
+
+            instance.getattr(py, foo).unwrap_err();
+            instance.setattr(py, foo, bar)?;
+            assert!(instance.getattr(py, foo)?.as_ref(py).eq(bar)?);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn invalid_attr() -> PyResult<()> {
+        Python::with_gil(|py| {
+            let instance: Py<PyAny> = py.eval("object()", None, None)?.into();
+
+            instance.getattr(py, "foo").unwrap_err();
+
+            // Cannot assign arbitrary attributes to `object`
+            instance.setattr(py, "foo", "bar").unwrap_err();
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "macros")]
+    mod using_macros {
+        use super::*;
+
+        #[crate::pyclass]
+        #[pyo3(crate = "crate")]
+        struct SomeClass(i32);
+
+        #[test]
+        fn instance_borrow_methods() {
+            // More detailed tests of the underlying semantics in pycell.rs
+            Python::with_gil(|py| {
+                let instance = Py::new(py, SomeClass(0)).unwrap();
+                assert_eq!(instance.borrow(py).0, 0);
+                assert_eq!(instance.try_borrow(py).unwrap().0, 0);
+                assert_eq!(instance.borrow_mut(py).0, 0);
+                assert_eq!(instance.try_borrow_mut(py).unwrap().0, 0);
+
+                instance.borrow_mut(py).0 = 123;
+
+                assert_eq!(instance.borrow(py).0, 123);
+                assert_eq!(instance.try_borrow(py).unwrap().0, 123);
+                assert_eq!(instance.borrow_mut(py).0, 123);
+                assert_eq!(instance.try_borrow_mut(py).unwrap().0, 123);
+            })
+        }
     }
 }

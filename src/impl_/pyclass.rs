@@ -2,9 +2,10 @@ use crate::{
     exceptions::{PyAttributeError, PyNotImplementedError},
     ffi,
     impl_::freelist::FreeList,
+    impl_::pycell::{GetBorrowChecker, PyClassMutability},
     pycell::PyCellLayout,
     pyclass_init::PyObjectInit,
-    type_object::{PyLayout, PyTypeObject},
+    type_object::PyLayout,
     Py, PyAny, PyCell, PyClass, PyErr, PyMethodDefType, PyNativeType, PyResult, PyTypeInfo, Python,
 };
 use std::{
@@ -28,8 +29,8 @@ pub fn weaklist_offset<T: PyClass>() -> ffi::Py_ssize_t {
 
 /// Represents the `__dict__` field for `#[pyclass]`.
 pub trait PyClassDict {
-    /// Initializes a [PyObject](crate::ffi::PyObject) `__dict__` reference.
-    fn new() -> Self;
+    /// Initial form of a [PyObject](crate::ffi::PyObject) `__dict__` reference.
+    const INIT: Self;
     /// Empties the dictionary of its key-value pairs.
     #[inline]
     fn clear_dict(&mut self, _py: Python<'_>) {}
@@ -39,7 +40,7 @@ pub trait PyClassDict {
 /// Represents the `__weakref__` field for `#[pyclass]`.
 pub trait PyClassWeakRef {
     /// Initializes a `weakref` instance.
-    fn new() -> Self;
+    const INIT: Self;
     /// Clears the weak references to the given object.
     ///
     /// # Safety
@@ -55,18 +56,12 @@ pub struct PyClassDummySlot;
 
 impl PyClassDict for PyClassDummySlot {
     private_impl! {}
-    #[inline]
-    fn new() -> Self {
-        PyClassDummySlot
-    }
+    const INIT: Self = PyClassDummySlot;
 }
 
 impl PyClassWeakRef for PyClassDummySlot {
     private_impl! {}
-    #[inline]
-    fn new() -> Self {
-        PyClassDummySlot
-    }
+    const INIT: Self = PyClassDummySlot;
 }
 
 /// Actual dict field, which holds the pointer to `__dict__`.
@@ -77,10 +72,7 @@ pub struct PyClassDictSlot(*mut ffi::PyObject);
 
 impl PyClassDict for PyClassDictSlot {
     private_impl! {}
-    #[inline]
-    fn new() -> Self {
-        Self(std::ptr::null_mut())
-    }
+    const INIT: Self = Self(std::ptr::null_mut());
     #[inline]
     fn clear_dict(&mut self, _py: Python<'_>) {
         if !self.0.is_null() {
@@ -97,10 +89,7 @@ pub struct PyClassWeakRefSlot(*mut ffi::PyObject);
 
 impl PyClassWeakRef for PyClassWeakRefSlot {
     private_impl! {}
-    #[inline]
-    fn new() -> Self {
-        Self(std::ptr::null_mut())
-    }
+    const INIT: Self = Self(std::ptr::null_mut());
     #[inline]
     unsafe fn clear_weakrefs(&mut self, obj: *mut ffi::PyObject, _py: Python<'_>) {
         if !self.0.is_null() {
@@ -158,11 +147,27 @@ pub trait PyClassImpl: Sized {
     /// #[pyclass(mapping)]
     const IS_MAPPING: bool = false;
 
+    /// #[pyclass(sequence)]
+    const IS_SEQUENCE: bool = false;
+
     /// Layout
     type Layout: PyLayout<Self>;
 
     /// Base class
-    type BaseType: PyTypeInfo + PyTypeObject + PyClassBaseType;
+    type BaseType: PyTypeInfo + PyClassBaseType;
+
+    /// Immutable or mutable
+    type PyClassMutability: PyClassMutability + GetBorrowChecker<Self>;
+
+    /// Specify this class has `#[pyclass(dict)]` or not.
+    type Dict: PyClassDict;
+
+    /// Specify this class has `#[pyclass(weakref)]` or not.
+    type WeakRef: PyClassWeakRef;
+
+    /// The closest native ancestor. This is `PyAny` by default, and when you declare
+    /// `#[pyclass(extends=PyDict)]`, it's `PyDict`.
+    type BaseNativeType: PyTypeInfo + PyNativeType;
 
     /// This handles following two situations:
     /// 1. In case `T` is `Send`, stub `ThreadChecker` is used and does nothing.
@@ -176,7 +181,7 @@ pub trait PyClassImpl: Sized {
     #[cfg(feature = "multiple-pymethods")]
     type Inventory: PyClassInventory;
 
-    fn for_all_items(visitor: &mut dyn FnMut(&PyClassItems));
+    fn items_iter() -> PyClassItemsIter;
 
     #[inline]
     fn dict_offset() -> Option<ffi::Py_ssize_t> {
@@ -185,6 +190,208 @@ pub trait PyClassImpl: Sized {
     #[inline]
     fn weaklist_offset() -> Option<ffi::Py_ssize_t> {
         None
+    }
+}
+
+/// Iterator used to process all class items during type instantiation.
+pub struct PyClassItemsIter {
+    /// Iteration state
+    idx: usize,
+    /// Items from the `#[pyclass]` macro
+    pyclass_items: &'static PyClassItems,
+    /// Items from the `#[pymethods]` macro
+    #[cfg(not(feature = "multiple-pymethods"))]
+    pymethods_items: &'static PyClassItems,
+    /// Items from the `#[pymethods]` macro with inventory
+    #[cfg(feature = "multiple-pymethods")]
+    pymethods_items: Box<dyn Iterator<Item = &'static PyClassItems>>,
+
+    // pyproto items, to be removed soon.
+    #[cfg(feature = "pyproto")]
+    object_protocol_items: &'static PyClassItems,
+    #[cfg(feature = "pyproto")]
+    descr_protocol_items: &'static PyClassItems,
+    #[cfg(feature = "pyproto")]
+    gc_protocol_items: &'static PyClassItems,
+    #[cfg(feature = "pyproto")]
+    iter_protocol_items: &'static PyClassItems,
+    #[cfg(feature = "pyproto")]
+    mapping_protocol_items: &'static PyClassItems,
+    #[cfg(feature = "pyproto")]
+    number_protocol_items: &'static PyClassItems,
+    #[cfg(feature = "pyproto")]
+    async_protocol_items: &'static PyClassItems,
+    #[cfg(feature = "pyproto")]
+    sequence_protocol_items: &'static PyClassItems,
+    #[cfg(feature = "pyproto")]
+    buffer_protocol_items: &'static PyClassItems,
+}
+
+impl PyClassItemsIter {
+    #[cfg_attr(feature = "pyproto", allow(clippy::too_many_arguments))]
+    pub fn new(
+        pyclass_items: &'static PyClassItems,
+        #[cfg(not(feature = "multiple-pymethods"))] pymethods_items: &'static PyClassItems,
+        #[cfg(feature = "multiple-pymethods")] pymethods_items: Box<
+            dyn Iterator<Item = &'static PyClassItems>,
+        >,
+        #[cfg(feature = "pyproto")] object_protocol_items: &'static PyClassItems,
+        #[cfg(feature = "pyproto")] descr_protocol_items: &'static PyClassItems,
+        #[cfg(feature = "pyproto")] gc_protocol_items: &'static PyClassItems,
+        #[cfg(feature = "pyproto")] iter_protocol_items: &'static PyClassItems,
+        #[cfg(feature = "pyproto")] mapping_protocol_items: &'static PyClassItems,
+        #[cfg(feature = "pyproto")] number_protocol_items: &'static PyClassItems,
+        #[cfg(feature = "pyproto")] async_protocol_items: &'static PyClassItems,
+        #[cfg(feature = "pyproto")] sequence_protocol_items: &'static PyClassItems,
+        #[cfg(feature = "pyproto")] buffer_protocol_items: &'static PyClassItems,
+    ) -> Self {
+        Self {
+            idx: 0,
+            pyclass_items,
+            pymethods_items,
+            #[cfg(feature = "pyproto")]
+            object_protocol_items,
+            #[cfg(feature = "pyproto")]
+            descr_protocol_items,
+            #[cfg(feature = "pyproto")]
+            gc_protocol_items,
+            #[cfg(feature = "pyproto")]
+            iter_protocol_items,
+            #[cfg(feature = "pyproto")]
+            mapping_protocol_items,
+            #[cfg(feature = "pyproto")]
+            number_protocol_items,
+            #[cfg(feature = "pyproto")]
+            async_protocol_items,
+            #[cfg(feature = "pyproto")]
+            sequence_protocol_items,
+            #[cfg(feature = "pyproto")]
+            buffer_protocol_items,
+        }
+    }
+}
+
+impl Iterator for PyClassItemsIter {
+    type Item = &'static PyClassItems;
+
+    #[cfg(not(feature = "multiple-pymethods"))]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.idx {
+            0 => {
+                self.idx += 1;
+                Some(self.pyclass_items)
+            }
+            1 => {
+                self.idx += 1;
+                Some(self.pymethods_items)
+            }
+            #[cfg(feature = "pyproto")]
+            2 => {
+                self.idx += 1;
+                Some(self.object_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            3 => {
+                self.idx += 1;
+                Some(self.descr_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            4 => {
+                self.idx += 1;
+                Some(self.gc_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            5 => {
+                self.idx += 1;
+                Some(self.iter_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            6 => {
+                self.idx += 1;
+                Some(self.mapping_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            7 => {
+                self.idx += 1;
+                Some(self.number_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            8 => {
+                self.idx += 1;
+                Some(self.async_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            9 => {
+                self.idx += 1;
+                Some(self.sequence_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            10 => {
+                self.idx += 1;
+                Some(self.buffer_protocol_items)
+            }
+            // Termination clause
+            // NB self.idx reaches different final value (2 vs 11) depending on pyproto feature
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "multiple-pymethods")]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.idx {
+            0 => {
+                self.idx += 1;
+                Some(self.pyclass_items)
+            }
+            #[cfg(feature = "pyproto")]
+            1 => {
+                self.idx += 1;
+                Some(self.object_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            2 => {
+                self.idx += 1;
+                Some(self.descr_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            3 => {
+                self.idx += 1;
+                Some(self.gc_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            4 => {
+                self.idx += 1;
+                Some(self.iter_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            5 => {
+                self.idx += 1;
+                Some(self.mapping_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            6 => {
+                self.idx += 1;
+                Some(self.number_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            7 => {
+                self.idx += 1;
+                Some(self.async_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            8 => {
+                self.idx += 1;
+                Some(self.sequence_protocol_items)
+            }
+            #[cfg(feature = "pyproto")]
+            9 => {
+                self.idx += 1;
+                Some(self.buffer_protocol_items)
+            }
+            // Termination clause
+            // NB self.idx reaches different final value (1 vs 10) depending on pyproto feature
+            _ => self.pymethods_items.next(),
+        }
     }
 }
 
@@ -808,10 +1015,6 @@ mod pyproto_traits {
 #[cfg(feature = "pyproto")]
 pub use pyproto_traits::*;
 
-// Protocol slots from #[pymethods] if not using inventory.
-#[cfg(not(feature = "multiple-pymethods"))]
-items_trait!(PyMethodsProtocolItems, methods_protocol_items);
-
 // Thread checkers
 
 #[doc(hidden)]
@@ -866,9 +1069,14 @@ impl<T> PyClassThreadChecker<T> for ThreadCheckerImpl<T> {
 /// Thread checker for types that have `Send` and `extends=...`.
 /// Ensures that `T: Send` and the parent is not accessed by another thread.
 #[doc(hidden)]
-pub struct ThreadCheckerInherited<T: Send, U: PyClassBaseType>(PhantomData<T>, U::ThreadChecker);
+pub struct ThreadCheckerInherited<T: PyClass + Send, U: PyClassBaseType>(
+    PhantomData<T>,
+    U::ThreadChecker,
+);
 
-impl<T: Send, U: PyClassBaseType> PyClassThreadChecker<T> for ThreadCheckerInherited<T, U> {
+impl<T: PyClass + Send, U: PyClassBaseType> PyClassThreadChecker<T>
+    for ThreadCheckerInherited<T, U>
+{
     fn ensure(&self) {
         self.1.ensure();
     }
@@ -884,14 +1092,18 @@ pub trait PyClassBaseType: Sized {
     type BaseNativeType;
     type ThreadChecker: PyClassThreadChecker<Self>;
     type Initializer: PyObjectInit<Self>;
+    type PyClassMutability: PyClassMutability;
 }
 
-/// All PyClasses can be used as a base type.
+/// All mutable PyClasses can be used as a base type.
+///
+/// In the future this will be extended to immutable PyClasses too.
 impl<T: PyClass> PyClassBaseType for T {
     type LayoutAsBase = crate::pycell::PyCell<T>;
     type BaseNativeType = T::BaseNativeType;
     type ThreadChecker = T::ThreadChecker;
     type Initializer = crate::pyclass_init::PyClassInitializer<Self>;
+    type PyClassMutability = T::PyClassMutability;
 }
 
 /// Implementation of tp_dealloc for all pyclasses
