@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -17,8 +18,8 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
       - run: pip install nox
       - uses: actions-rs/toolchain@v1
         with:
@@ -33,8 +34,8 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
       - run: pip install nox
       - uses: actions-rs/toolchain@v1
         with:
@@ -53,7 +54,7 @@ jobs:
         target: [powerpc64le-unknown-linux-gnu, s390x-unknown-linux-gnu, wasm32-wasi]
     name: check-${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -71,8 +72,8 @@ jobs:
             echo "suppress_build_script_link_lines=true" >> config.txt
             PYO3_BUILD_CONFIG=$(pwd)/config.txt cargo check --all-targets --no-default-features
             PYO3_BUILD_CONFIG=$(pwd)/config.txt cargo check --all-targets --no-default-features --features "abi3"
-            PYO3_BUILD_CONFIG=$(pwd)/config.txt cargo check --all-targets --features full
-            PYO3_BUILD_CONFIG=$(pwd)/config.txt cargo check --all-targets --features "abi3 full"
+            PYO3_BUILD_CONFIG=$(pwd)/config.txt cargo check --all-targets --features "full multiple-pymethods"
+            PYO3_BUILD_CONFIG=$(pwd)/config.txt cargo check --all-targets --features "abi3 full multiple-pymethods"
           done
 
   build:
@@ -83,13 +84,14 @@ jobs:
       # If one platform fails, allow the rest to keep testing if `CI-no-fail-fast` label is present
       fail-fast: ${{ !contains(github.event.pull_request.labels.*.name, 'CI-no-fail-fast') }}
       matrix:
+        extra_features: ["multiple-pymethods"]  # Because MSRV doesn't support this
         rust: [stable]
         python-version: [
           "3.7",
           "3.8",
           "3.9",
           "3.10",
-          "3.11-dev",
+          "3.11",
           "pypy-3.7",
           "pypy-3.8",
           "pypy-3.9"
@@ -123,6 +125,7 @@ jobs:
                 rust-target: "x86_64-unknown-linux-gnu",
               }
             msrv: "MSRV"
+            extra_features: ""
 
           # Test the `nightly` feature
           - rust: nightly
@@ -133,7 +136,7 @@ jobs:
                 python-architecture: "x64",
                 rust-target: "x86_64-unknown-linux-gnu",
               }
-            extra_features: "nightly"
+            extra_features: "nightly multiple-pymethods"
 
           # Test 32-bit Windows only with the latest Python version
           - rust: stable
@@ -144,11 +147,12 @@ jobs:
                 python-architecture: "x86",
                 rust-target: "i686-pc-windows-msvc",
               }
+            extra_features: "multiple-pymethods"
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
           architecture: ${{ matrix.platform.python-architecture }}
@@ -177,11 +181,17 @@ jobs:
         run: |
           set -x
           cargo update -p indexmap --precise 1.6.2
-          cargo update -p hashbrown:0.12.1 --precise 0.9.1
+          cargo update -p hashbrown:0.12.3 --precise 0.9.1
           PROJECTS=("." "examples/decorator" "examples/maturin-starter" "examples/setuptools-rust-starter" "examples/word-count")
           for PROJ in ${PROJECTS[@]}; do
             cargo update --manifest-path "$PROJ/Cargo.toml" -p parking_lot --precise 0.11.0
+            cargo update --manifest-path "$PROJ/Cargo.toml" -p once_cell --precise 1.14.0
           done
+          cargo update -p plotters --precise 0.3.1
+          cargo update -p plotters-svg --precise 0.3.1
+          cargo update -p plotters-backend --precise 0.3.2
+          cargo update -p bumpalo --precise 3.10.0
+          cargo update -p once_cell --precise 1.14.0
 
       - name: Build docs
         run: cargo doc --no-deps --no-default-features --features "full ${{ matrix.extra_features }}"
@@ -238,7 +248,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install -U pip nox
-          cargo xtask test-py
+          nox -s test-py
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
@@ -250,7 +260,7 @@ jobs:
         with:
           target: aarch64-unknown-linux-gnu
           manylinux: auto
-          args: --release -i python3.9 --no-sdist -m examples/maturin-starter/Cargo.toml
+          args: --release -i python3.9 -m examples/maturin-starter/Cargo.toml
 
       - run: sudo rm -rf examples/maturin-starter/target
         if: ${{ matrix.platform.os == 'ubuntu-latest' && matrix.python-version == '3.9' }}
@@ -262,14 +272,14 @@ jobs:
         with:
           target: x86_64-unknown-linux-gnu
           manylinux: auto
-          args: --release -i python3.9 --no-sdist -m examples/maturin-starter/Cargo.toml
+          args: --release -i python3.9 -m examples/maturin-starter/Cargo.toml
 
       - name: Test cross compilation
         if: ${{ matrix.platform.os == 'macos-latest' && matrix.python-version == '3.9' }}
         uses: messense/maturin-action@v1
         with:
           target: aarch64-apple-darwin
-          args: --release -i python3.9 --no-sdist -m examples/maturin-starter/Cargo.toml
+          args: --release -i python3.9 -m examples/maturin-starter/Cargo.toml
 
       - name: Test cross compile to Windows
         if: ${{ matrix.platform.os == 'ubuntu-latest' && matrix.python-version == '3.8' }}
@@ -292,7 +302,7 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           target: x86_64-pc-windows-gnu
-          args: -i python3.8 --no-sdist -m examples/maturin-starter/Cargo.toml --cargo-extra-args="--features abi3"
+          args: -i python3.8 -m examples/maturin-starter/Cargo.toml --features abi3
 
     env:
       CARGO_TERM_VERBOSE: true
@@ -308,6 +318,58 @@ jobs:
       # 1.49.
       CARGO_PRIMARY_PACKAGE: 1
 
+  valgrind:
+    needs: [fmt]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - uses: Swatinem/rust-cache@v1
+        with:
+          key: cargo-valgrind
+        continue-on-error: true
+      - uses: actions-rs/toolchain@v1
+        with:
+          # FIXME(adamreichold): Switch to stable when Valgrind understands DWARF5 as generated by LLVM 14,
+          # c.f. https://bugs.kde.org/show_bug.cgi?id=452758#c35
+          toolchain: 1.61.0
+          override: true
+          profile: minimal
+      - uses: taiki-e/install-action@valgrind
+      - run: python -m pip install -U pip nox
+      - run: nox -s test-rust -- release skip-full
+    env:
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: valgrind --leak-check=no --error-exitcode=1
+      RUST_BACKTRACE: 1
+      TRYBUILD: overwrite
+
+  careful:
+    needs: [fmt]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - uses: Swatinem/rust-cache@v1
+        with:
+          key: cargo-careful
+        continue-on-error: true
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+          profile: minimal
+          components: rust-src
+      - run: cargo install cargo-careful
+      - run: python -m pip install -U pip nox
+      - run: nox -s test-rust -- careful skip-full
+    env:
+      RUST_BACKTRACE: 1
+      TRYBUILD: overwrite
+
   coverage:
     needs: [fmt]
     name: coverage-${{ matrix.os }}
@@ -316,8 +378,8 @@ jobs:
         os: ["windows", "macos", "ubuntu"]
     runs-on: ${{ matrix.os }}-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
         with:
           python-version: "3.10"
       - uses: Swatinem/rust-cache@v1
@@ -333,8 +395,41 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - run: python -m pip install -U pip nox
-      - run: cargo xtask coverage --output-lcov coverage.lcov
-      - uses: codecov/codecov-action@v2
+      - run: nox -s coverage
+      - uses: codecov/codecov-action@v3
         with:
           file: coverage.lcov
           name: ${{ matrix.os }}
+
+  emscripten:
+    name: emscripten
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v4
+        id: setup-python
+        with:
+          python-version: 3.11.0-beta.4
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-emscripten
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 14
+      - run: pip install nox
+      - uses: actions/cache@v3
+        id: cache
+        with:
+          path: |
+            .nox/emscripten
+          key: ${{ hashFiles('emscripten/*') }} - ${{ hashFiles('noxfile.py') }} - ${{ steps.setup-python.outputs.python-path }}
+      - uses: Swatinem/rust-cache@v1
+        with:
+          key: cargo-emscripten-wasm32
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: nox -s build-emscripten
+      - name: Test
+        run: nox -s test-emscripten

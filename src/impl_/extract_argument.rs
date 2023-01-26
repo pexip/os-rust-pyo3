@@ -1,76 +1,145 @@
 use crate::{
     exceptions::PyTypeError,
     ffi,
-    type_object::PyTypeObject,
+    pyclass::boolean_struct::False,
     types::{PyDict, PyString, PyTuple},
-    FromPyObject, PyAny, PyErr, PyResult, Python,
+    FromPyObject, PyAny, PyClass, PyErr, PyRef, PyRefMut, PyResult, PyTypeInfo, Python,
 };
+
+/// A trait which is used to help PyO3 macros extract function arguments.
+///
+/// `#[pyclass]` structs need to extract as `PyRef<T>` and `PyRefMut<T>`
+/// wrappers rather than extracting `&T` and `&mut T` directly. The `Holder` type is used
+/// to hold these temporary wrappers - the way the macro is constructed, these wrappers
+/// will be dropped as soon as the pyfunction call ends.
+///
+/// There exists a trivial blanket implementation for `T: FromPyObject` with `Holder = ()`.
+pub trait PyFunctionArgument<'a, 'py>: Sized + 'a {
+    type Holder: FunctionArgumentHolder;
+    fn extract(obj: &'py PyAny, holder: &'a mut Self::Holder) -> PyResult<Self>;
+}
+
+impl<'a, 'py, T> PyFunctionArgument<'a, 'py> for T
+where
+    T: FromPyObject<'py> + 'a,
+{
+    type Holder = ();
+
+    #[inline]
+    fn extract(obj: &'py PyAny, _: &'a mut ()) -> PyResult<Self> {
+        obj.extract()
+    }
+}
+
+/// Trait for types which can be a function argument holder - they should
+/// to be able to const-initialize to an empty value.
+pub trait FunctionArgumentHolder: Sized {
+    const INIT: Self;
+}
+
+impl FunctionArgumentHolder for () {
+    const INIT: Self = ();
+}
+
+impl<T> FunctionArgumentHolder for Option<T> {
+    const INIT: Self = None;
+}
+
+#[inline]
+pub fn extract_pyclass_ref<'a, 'py: 'a, T: PyClass>(
+    obj: &'py PyAny,
+    holder: &'a mut Option<PyRef<'py, T>>,
+) -> PyResult<&'a T> {
+    #[cfg(not(option_insert))]
+    {
+        *holder = Some(obj.extract()?);
+        return Ok(holder.as_deref().unwrap());
+    }
+
+    #[cfg(option_insert)]
+    Ok(&*holder.insert(obj.extract()?))
+}
+
+#[inline]
+pub fn extract_pyclass_ref_mut<'a, 'py: 'a, T: PyClass<Frozen = False>>(
+    obj: &'py PyAny,
+    holder: &'a mut Option<PyRefMut<'py, T>>,
+) -> PyResult<&'a mut T> {
+    #[cfg(not(option_insert))]
+    {
+        *holder = Some(obj.extract()?);
+        return Ok(holder.as_deref_mut().unwrap());
+    }
+
+    #[cfg(option_insert)]
+    Ok(&mut *holder.insert(obj.extract()?))
+}
 
 /// The standard implementation of how PyO3 extracts a `#[pyfunction]` or `#[pymethod]` function argument.
 #[doc(hidden)]
-#[inline]
-pub fn extract_argument<'py, T>(obj: &'py PyAny, arg_name: &str) -> PyResult<T>
+pub fn extract_argument<'a, 'py, T>(
+    obj: &'py PyAny,
+    holder: &'a mut T::Holder,
+    arg_name: &str,
+) -> PyResult<T>
 where
-    T: FromPyObject<'py>,
+    T: PyFunctionArgument<'a, 'py>,
 {
-    match obj.extract() {
+    match PyFunctionArgument::extract(obj, holder) {
         Ok(value) => Ok(value),
         Err(e) => Err(argument_extraction_error(obj.py(), arg_name, e)),
     }
 }
 
-/// Alternative to [`extract_argument`] used for `Option<T>` arguments (because they are implicitly treated
-/// as optional if at the end of the positional parameters).
+/// Alternative to [`extract_argument`] used for `Option<T>` arguments. This is necessary because Option<&T>
+/// does not implement `PyFunctionArgument` for `T: PyClass`.
 #[doc(hidden)]
-#[inline]
-pub fn extract_optional_argument<'py, T>(
+pub fn extract_optional_argument<'a, 'py, T>(
     obj: Option<&'py PyAny>,
+    holder: &'a mut T::Holder,
     arg_name: &str,
+    default: fn() -> Option<T>,
 ) -> PyResult<Option<T>>
 where
-    T: FromPyObject<'py>,
+    T: PyFunctionArgument<'a, 'py>,
 {
     match obj {
-        Some(obj) => match obj.extract() {
-            Ok(value) => Ok(value),
-            Err(e) => Err(argument_extraction_error(obj.py(), arg_name, e)),
-        },
-        None => Ok(None),
+        Some(obj) => {
+            if obj.is_none() {
+                // Explicit `None` will result in None being used as the function argument
+                Ok(None)
+            } else {
+                extract_argument(obj, holder, arg_name).map(Some)
+            }
+        }
+        _ => Ok(default()),
     }
 }
 
 /// Alternative to [`extract_argument`] used when the argument has a default value provided by an annotation.
 #[doc(hidden)]
-#[inline]
-pub fn extract_argument_with_default<'py, T>(
+pub fn extract_argument_with_default<'a, 'py, T>(
     obj: Option<&'py PyAny>,
+    holder: &'a mut T::Holder,
     arg_name: &str,
-    default: impl FnOnce() -> T,
+    default: fn() -> T,
 ) -> PyResult<T>
 where
-    T: FromPyObject<'py>,
+    T: PyFunctionArgument<'a, 'py>,
 {
     match obj {
-        Some(obj) => match obj.extract() {
-            Ok(value) => Ok(value),
-            Err(e) => Err(argument_extraction_error(obj.py(), arg_name, e)),
-        },
+        Some(obj) => extract_argument(obj, holder, arg_name),
         None => Ok(default()),
     }
 }
 
 /// Alternative to [`extract_argument`] used when the argument has a `#[pyo3(from_py_with)]` annotation.
-///
-/// # Safety
-/// - `obj` must not be None (this helper is only used for required function arguments).
 #[doc(hidden)]
-#[inline]
 pub fn from_py_with<'py, T>(
     obj: &'py PyAny,
     arg_name: &str,
-    extractor: impl FnOnce(&'py PyAny) -> PyResult<T>,
+    extractor: fn(&'py PyAny) -> PyResult<T>,
 ) -> PyResult<T> {
-    // Safety: obj is not None (see safety
     match extractor(obj) {
         Ok(value) => Ok(value),
         Err(e) => Err(argument_extraction_error(obj.py(), arg_name, e)),
@@ -79,18 +148,14 @@ pub fn from_py_with<'py, T>(
 
 /// Alternative to [`extract_argument`] used when the argument has a `#[pyo3(from_py_with)]` annotation and also a default value.
 #[doc(hidden)]
-#[inline]
 pub fn from_py_with_with_default<'py, T>(
     obj: Option<&'py PyAny>,
     arg_name: &str,
-    extractor: impl FnOnce(&'py PyAny) -> PyResult<T>,
-    default: impl FnOnce() -> T,
+    extractor: fn(&'py PyAny) -> PyResult<T>,
+    default: fn() -> T,
 ) -> PyResult<T> {
     match obj {
-        Some(obj) => match extractor(obj) {
-            Ok(value) => Ok(value),
-            Err(e) => Err(argument_extraction_error(obj.py(), arg_name, e)),
-        },
+        Some(obj) => from_py_with(obj, arg_name, extractor),
         None => Ok(default()),
     }
 }
@@ -156,7 +221,7 @@ impl FunctionDescription {
     /// Equivalent of `extract_arguments_tuple_dict` which uses the Python C-API "fastcall" convention.
     ///
     /// # Safety
-    /// - `args` must be a pointer to a C-style array of valid `ffi::PyObject` pointers.
+    /// - `args` must be a pointer to a C-style array of valid `ffi::PyObject` pointers, or NULL.
     /// - `kwnames` must be a pointer to a PyTuple, or NULL.
     /// - `nargs + kwnames.len()` is the total length of the `args` array.
     #[cfg(not(Py_LIMITED_API))]
@@ -175,7 +240,11 @@ impl FunctionDescription {
         // Safety: Option<&PyAny> has the same memory layout as `*mut ffi::PyObject`
         let args = args as *const Option<&PyAny>;
         let positional_args_provided = nargs as usize;
-        let args_slice = std::slice::from_raw_parts(args, positional_args_provided);
+        let args_slice = if args.is_null() {
+            &[]
+        } else {
+            std::slice::from_raw_parts(args, positional_args_provided)
+        };
 
         let num_positional_parameters = self.positional_parameter_names.len();
 

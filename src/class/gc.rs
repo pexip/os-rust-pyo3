@@ -3,6 +3,7 @@
 
 //! Python GC support
 
+use crate::pyclass::boolean_struct::False;
 use crate::{ffi, PyCell, PyClass};
 use std::os::raw::{c_int, c_void};
 
@@ -10,7 +11,7 @@ pub use crate::impl_::pymethods::{PyTraverseError, PyVisit};
 
 /// GC support
 #[deprecated(since = "0.16.0", note = "prefer `#[pymethods]` to `#[pyproto]`")]
-pub trait PyGCProtocol<'p>: PyClass {
+pub trait PyGCProtocol<'p>: PyClass<Frozen = False> {
     fn __traverse__(&'p self, visit: PyVisit<'_>) -> Result<(), PyTraverseError>;
     fn __clear__(&'p mut self);
 }

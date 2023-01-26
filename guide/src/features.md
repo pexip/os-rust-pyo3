@@ -1,4 +1,4 @@
-# Features Reference
+# Features reference
 
 PyO3 provides a number of Cargo features to customise functionality. This chapter of the guide provides detail on each of them.
 
@@ -59,7 +59,6 @@ This feature enables a dependency on the `pyo3-macros` crate, which provides the
 - `#[pyfunction]`
 - `#[pyclass]`
 - `#[pymethods]`
-- `#[pyproto]`
 - `#[derive(FromPyObject)]`
 
 It also provides the `py_run!` macro.
@@ -70,7 +69,7 @@ These macros require a number of dependencies which may not be needed by users w
 
 ### `multiple-pymethods`
 
-This feature enables a dependency on `inventory`, which enables each `#[pyclass]` to have more than one `#[pymethods]` block.
+This feature enables a dependency on `inventory`, which enables each `#[pyclass]` to have more than one `#[pymethods]` block. This feature also requires a minimum Rust version of 1.62 due to limitations in the `inventory` crate.
 
 Most users should only need a single `#[pymethods]` per `#[pyclass]`. In addition, not all platforms (e.g. Wasm) are supported by `inventory`. For this reason this feature is not enabled by default, meaning fewer dependencies and faster compilation for the majority of users.
 
@@ -78,9 +77,7 @@ See [the `#[pyclass]` implementation details](class.md#implementation-details) f
 
 ### `pyproto`
 
-This feature enables the `#[pyproto]` macro, which is an alternative (older, soon-to-be-deprecated) to `#[pymethods]` for defining magic methods such as `__eq__`.
-
-> This feature is enabled by default. To disable it, set `default-features = false` for the `pyo3` entry in your Cargo.toml.
+This feature enables the `#[pyproto]` macro, which is a deprecated alternative to `#[pymethods]` for defining magic methods such as `__eq__`.
 
 ### `nightly`
 
@@ -99,6 +96,16 @@ These features enable conversions between Python types and types from other Rust
 ### `anyhow`
 
 Adds a dependency on [anyhow](https://docs.rs/anyhow). Enables a conversion from [anyhow](https://docs.rs/anyhow)’s [`Error`](https://docs.rs/anyhow/latest/anyhow/struct.Error.html) type to [`PyErr`](https://docs.rs/pyo3/latest/pyo3/struct.PyErr.html), for easy error handling.
+
+### `chrono`
+
+Adds a dependency on [chrono](https://docs.rs/chrono). Enables a conversion from [chrono](https://docs.rs/chrono)'s types to python:
+- [Duration](https://docs.rs/chrono/latest/chrono/struct.Duration.html) -> [`PyDelta`]({{#PYO3_DOCS_URL}}/pyo3/types/struct.PyDelta.html)
+- [FixedOffset](https://docs.rs/chrono/latest/chrono/offset/struct.FixedOffset.html) -> [`PyDelta`]({{#PYO3_DOCS_URL}}/pyo3/types/struct.PyDelta.html)
+- [Utc](https://docs.rs/chrono/latest/chrono/offset/struct.Utc.html) -> [`PyTzInfo`]({{#PYO3_DOCS_URL}}/pyo3/types/struct.PyTzInfo.html)
+- [NaiveDate](https://docs.rs/chrono/latest/chrono/naive/struct.NaiveDate.html) -> [`PyDate`]({{#PYO3_DOCS_URL}}/pyo3/types/struct.PyDate.html)
+- [NaiveTime](https://docs.rs/chrono/latest/chrono/naive/struct.NaiveTime.html) -> [`PyTime`]({{#PYO3_DOCS_URL}}/pyo3/types/struct.PyTime.html)
+- [DateTime](https://docs.rs/chrono/latest/chrono/struct.DateTime.html) -> [`PyDateTime`]({{#PYO3_DOCS_URL}}/pyo3/types/struct.PyDateTime.html)
 
 ### `eyre`
 

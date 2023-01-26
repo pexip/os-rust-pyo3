@@ -3,6 +3,136 @@
 This guide can help you upgrade code through breaking changes from one PyO3 version to the next.
 For a detailed list of all changes, see the [CHANGELOG](changelog.md).
 
+## from 0.16.* to 0.17
+
+### Type checks have been changed for `PyMapping` and `PySequence` types
+
+Previously the type checks for `PyMapping` and `PySequence` (implemented in `PyTryFrom`)
+used the Python C-API functions `PyMapping_Check` and `PySequence_Check`.
+Unfortunately these functions are not sufficient for distinguishing such types,
+leading to inconsistent behavior (see
+[pyo3/pyo3#2072](https://github.com/PyO3/pyo3/issues/2072)).
+
+PyO3 0.17 changes these downcast checks to explicityly test if the type is a
+subclass of the corresponding abstract base class `collections.abc.Mapping` or
+`collections.abc.Sequence`. Note this requires calling into Python, which may
+incur a performance penalty over the previous method. If this performance
+penatly is a problem, you may be able to perform your own checks and use
+`try_from_unchecked` (unsafe).
+
+Another side-effect is that a pyclass defined in Rust with PyO3 will need to
+be _registered_ with the corresponding Python abstract base class for
+downcasting to succeed. `PySequence::register` and `PyMapping:register` have
+been added to make it easy to do this from Rust code. These are equivalent to
+calling `collections.abc.Mapping.register(MappingPyClass)` or
+`collections.abc.Sequence.register(SequencePyClass)` from Python.
+
+For example, for a mapping class defined in Rust:
+```rust,compile_fail
+use pyo3::prelude::*;
+use std::collections::HashMap;
+
+#[pyclass(mapping)]
+struct Mapping {
+    index: HashMap<String, usize>,
+}
+
+#[pymethods]
+impl Mapping {
+    #[new]
+    fn new(elements: Option<&PyList>) -> PyResult<Self> {
+    // ...
+    // truncated implementation of this mapping pyclass - basically a wrapper around a HashMap
+}
+
+```
+
+You must register the class with `collections.abc.Mapping` before the downcast will work:
+```rust,compile_fail
+let m = Py::new(py, Mapping { index }).unwrap();
+assert!(m.as_ref(py).downcast::<PyMapping>().is_err());
+PyMapping::register::<Mapping>(py).unwrap();
+assert!(m.as_ref(py).downcast::<PyMapping>().is_ok());
+```
+
+Note that this requirement may go away in the future when a pyclass is able to inherit from the abstract base class directly (see [pyo3/pyo3#991](https://github.com/PyO3/pyo3/issues/991)).
+
+### The `multiple-pymethods` feature now requires Rust 1.62
+
+Due to limitations in the `inventory` crate which the `multiple-pymethods` feature depends on, this feature now
+requires Rust 1.62. For more information see [dtolnay/inventory#32](https://github.com/dtolnay/inventory/issues/32).
+
+### Added `impl IntoPy<Py<PyString>> for &str`
+
+This may cause inference errors.
+
+Before:
+```rust,compile_fail
+# use pyo3::prelude::*;
+#
+# fn main() {
+Python::with_gil(|py| {
+    // Cannot infer either `Py<PyAny>` or `Py<PyString>`
+    let _test = "test".into_py(py);
+});
+# }
+```
+
+After, some type annotations may be necessary:
+
+```rust
+# use pyo3::prelude::*;
+#
+# fn main() {
+Python::with_gil(|py| {
+    let _test: Py<PyAny> = "test".into_py(py);
+});
+# }
+```
+
+### The `pyproto` feature is now disabled by default
+
+In preparation for removing the deprecated `#[pyproto]` attribute macro in a future PyO3 version, it is now gated behind an opt-in feature flag. This also gives a slight saving to compile times for code which does not use the deprecated macro.
+
+### `PyTypeObject` trait has been deprecated
+
+The `PyTypeObject` trait already was near-useless; almost all functionality was already on the `PyTypeInfo` trait, which `PyTypeObject` had a blanket implementation based upon. In PyO3 0.17 the final method, `PyTypeObject::type_object` was moved to `PyTypeInfo::type_object`.
+
+To migrate, update trait bounds and imports from `PyTypeObject` to `PyTypeInfo`.
+
+Before:
+
+```rust,compile_fail
+use pyo3::Python;
+use pyo3::type_object::PyTypeObject;
+use pyo3::types::PyType;
+
+fn get_type_object<T: PyTypeObject>(py: Python<'_>) -> &PyType {
+    T::type_object(py)
+}
+```
+
+After
+
+```rust
+use pyo3::{Python, PyTypeInfo};
+use pyo3::types::PyType;
+
+fn get_type_object<T: PyTypeInfo>(py: Python<'_>) -> &PyType {
+    T::type_object(py)
+}
+
+# Python::with_gil(|py| { get_type_object::<pyo3::types::PyList>(py); });
+```
+
+### `impl<T, const N: usize> IntoPy<PyObject> for [T; N]` now requires `T: IntoPy` rather than `T: ToPyObject`
+
+If this leads to errors, simply implement `IntoPy`. Because pyclasses already implement `IntoPy`, you probably don't need to worry about this.
+
+### Each `#[pymodule]` can now only be initialized once per process
+
+To make PyO3 modules sound in the presence of Python sub-interpreters, for now it has been necessary to explicitly disable the ability to initialize a `#[pymodule]` more than once in the same process. Attempting to do this will now raise an `ImportError`.
+
 ## from 0.15.* to 0.16
 
 ### Drop support for older technologies
@@ -19,7 +149,7 @@ Migration from `#[pyproto]` to `#[pymethods]` is straightforward; copying the ex
 
 Before:
 
-```rust,ignore
+```rust,compile_fail
 use pyo3::prelude::*;
 use pyo3::class::{PyBasicProtocol, PyIterProtocol};
 use pyo3::types::PyString;
@@ -44,7 +174,7 @@ impl PyIterProtocol for MyClass {
 
 After
 
-```rust,ignore
+```rust,compile_fail
 use pyo3::prelude::*;
 use pyo3::types::PyString;
 
@@ -100,9 +230,9 @@ class ExampleContainer:
 
 This class implements a Python [sequence](https://docs.python.org/3/glossary.html#term-sequence).
 
-The `__len__` and `__getitem__` methods are also used to implement a Python [mapping](https://docs.python.org/3/glossary.html#term-mapping). In the Python C-API, these methods are not shared: the sequence `__len__` and `__getitem__` are defined by the `sq_len` and `sq_item` slots, and the mapping equivalents are `mp_len` and `mp_subscript`. There are similar distinctions for `__setitem__` and `__delitem__`.
+The `__len__` and `__getitem__` methods are also used to implement a Python [mapping](https://docs.python.org/3/glossary.html#term-mapping). In the Python C-API, these methods are not shared: the sequence `__len__` and `__getitem__` are defined by the `sq_length` and `sq_item` slots, and the mapping equivalents are `mp_length` and `mp_subscript`. There are similar distinctions for `__setitem__` and `__delitem__`.
 
-Because there is no such distinction from Python, implementing these methods will fill the mapping and sequence slots simultaneously. A Python class with `__len__` implemented, for example, will have both the `sq_len` and `mp_len` slots filled.
+Because there is no such distinction from Python, implementing these methods will fill the mapping and sequence slots simultaneously. A Python class with `__len__` implemented, for example, will have both the `sq_length` and `mp_length` slots filled.
 
 The PyO3 behavior in 0.16 has been changed to be closer to this Python behavior by default.
 
@@ -208,7 +338,7 @@ To migrate just move the affected methods from a `#[pyproto]` to a `#[pymethods]
 
 Before:
 
-```rust,ignore
+```rust,compile_fail
 use pyo3::prelude::*;
 use pyo3::class::basic::PyBasicProtocol;
 
@@ -292,7 +422,7 @@ Exception types](#exception-types-have-been-reworked)).
 This implementation was redundant. Just construct the `Result::Err` variant directly.
 
 Before:
-```rust,ignore
+```rust,compile_fail
 let result: PyResult<()> = PyErr::new::<TypeError, _>("error message").into();
 ```
 
@@ -310,13 +440,13 @@ makes it possible to interact with Python exception objects.
 
 The new types also have names starting with the "Py" prefix. For example, before:
 
-```rust,ignore
+```rust,compile_fail
 let err: PyErr = TypeError::py_err("error message");
 ```
 
 After:
 
-```rust,ignore
+```rust,compile_fail
 # use pyo3::{PyErr, PyResult, Python, type_object::PyTypeObject};
 # use pyo3::exceptions::{PyBaseException, PyTypeError};
 # Python::with_gil(|py| -> PyResult<()> {
@@ -341,7 +471,7 @@ Now there is only one way to define the conversion, `IntoPy`, so downstream crat
 adjust accordingly.
 
 Before:
-```rust,ignore
+```rust,compile_fail
 # use pyo3::prelude::*;
 struct MyPyObjectWrapper(PyObject);
 
@@ -367,7 +497,7 @@ impl IntoPy<PyObject> for MyPyObjectWrapper {
 Similarly, code which was using the `FromPy` trait can be trivially rewritten to use `IntoPy`.
 
 Before:
-```rust,ignore
+```rust,compile_fail
 # use pyo3::prelude::*;
 # Python::with_gil(|py| {
 let obj = PyObject::from_py(1.234, py);
@@ -395,7 +525,7 @@ This should require no code changes except removing `use pyo3::AsPyRef` for code
 `pyo3::prelude::*`.
 
 Before:
-```rust,ignore
+```rust,compile_fail
 use pyo3::{AsPyRef, Py, types::PyList};
 # pyo3::Python::with_gil(|py| {
 let list_py: Py<PyList> = PyList::empty(py).into();
@@ -656,7 +786,7 @@ If `T` implements `Clone`, you can extract `T` itself.
 In addition, you can also extract `&PyCell<T>`, though you rarely need it.
 
 Before:
-```ignore
+```compile_fail
 let obj: &PyAny = create_obj();
 let obj_ref: &MyClass = obj.extract().unwrap();
 let obj_ref_mut: &mut MyClass = obj.extract().unwrap();
@@ -709,7 +839,10 @@ impl PySequenceProtocol for ByteSequence {
 ```
 
 After:
-```rust,ignore
+```rust
+# #[allow(deprecated)]
+# #[cfg(feature = "pyproto")]
+# {
 # use pyo3::prelude::*;
 # use pyo3::class::PySequenceProtocol;
 #[pyclass]
@@ -723,6 +856,7 @@ impl PySequenceProtocol for ByteSequence {
         elements.extend_from_slice(&other.elements);
         Ok(Self { elements })
     }
+}
 }
 ```
 
