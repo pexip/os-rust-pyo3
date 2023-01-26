@@ -2,6 +2,7 @@
 
 //! Defines conversions between Rust and Python types.
 use crate::err::{self, PyDowncastError, PyResult};
+use crate::pyclass::boolean_struct::False;
 use crate::type_object::PyTypeInfo;
 use crate::types::PyTuple;
 use crate::{
@@ -9,30 +10,88 @@ use crate::{
 };
 use std::ptr::NonNull;
 
-/// This trait represents that **we can do zero-cost conversion from the object
-/// to a FFI pointer**.
+/// Returns a borrowed pointer to a Python object.
 ///
-/// This trait is implemented for types that internally wrap a pointer to a Python object.
+/// The returned pointer will be valid for as long as `self` is. It may be null depending on the
+/// implementation.
 ///
 /// # Examples
 ///
-/// ```
-/// use pyo3::{prelude::*, AsPyPointer};
+/// ```rust
+/// use pyo3::prelude::*;
+/// use pyo3::AsPyPointer;
+/// use pyo3::types::PyString;
+/// use pyo3::ffi;
+///
 /// Python::with_gil(|py| {
-///     let dict = pyo3::types::PyDict::new(py);
-///     // All native object wrappers implement AsPyPointer!!!
-///     assert_ne!(dict.as_ptr(), std::ptr::null_mut());
+///     let s: Py<PyString> = "foo".into_py(py);
+///     let ptr = s.as_ptr();
+///
+///     let is_really_a_pystring = unsafe { ffi::PyUnicode_CheckExact(ptr) };
+///     assert_eq!(is_really_a_pystring, 1);
 /// });
 /// ```
+///
+/// # Safety
+///
+/// It is your responsibility to make sure that the underlying Python object is not dropped too
+/// early. For example, the following code will cause undefined behavior:
+///
+/// ```rust,no_run
+/// # use pyo3::prelude::*;
+/// # use pyo3::AsPyPointer;
+/// # use pyo3::ffi;
+/// #
+/// Python::with_gil(|py| {
+///     let ptr: *mut ffi::PyObject = 0xabad1dea_u32.into_py(py).as_ptr();
+///
+///     let isnt_a_pystring = unsafe {
+///         // `ptr` is dangling, this is UB
+///         ffi::PyUnicode_CheckExact(ptr)
+///     };
+/// #    assert_eq!(isnt_a_pystring, 0);
+/// });
+/// ```
+///
+/// This happens because the pointer returned by `as_ptr` does not carry any lifetime information
+/// and the Python object is dropped immediately after the `0xabad1dea_u32.into_py(py).as_ptr()`
+/// expression is evaluated. To fix the problem, bind Python object to a local variable like earlier
+/// to keep the Python object alive until the end of its scope.
 pub trait AsPyPointer {
-    /// Retrieves the underlying FFI pointer (as a borrowed pointer).
+    /// Returns the underlying FFI pointer as a borrowed pointer.
     fn as_ptr(&self) -> *mut ffi::PyObject;
 }
 
-/// This trait allows retrieving the underlying FFI pointer from Python objects.
+/// Returns an owned pointer to a Python object.
+///
+/// The returned pointer will be valid until you decrease its reference count. It may be null
+/// depending on the implementation.
+/// It is your responsibility to decrease the reference count of the pointer to avoid leaking memory.
+///
+/// # Examples
+///
+/// ```rust
+/// use pyo3::prelude::*;
+/// use pyo3::IntoPyPointer;
+/// use pyo3::types::PyString;
+/// use pyo3::ffi;
+///
+/// Python::with_gil(|py| {
+///     let s: Py<PyString> = "foo".into_py(py);
+///     let ptr = s.into_ptr();
+///
+///     let is_really_a_pystring = unsafe { ffi::PyUnicode_CheckExact(ptr) };
+///     assert_eq!(is_really_a_pystring, 1);
+///
+///     // Because we took ownership of the pointer,
+///     // we must manually decrement it to avoid leaking memory
+///     unsafe { ffi::Py_DECREF(ptr) };
+/// });
+/// ```
 pub trait IntoPyPointer {
-    /// Retrieves the underlying FFI pointer. Whether pointer owned or borrowed
-    /// depends on implementation.
+    /// Returns the underlying FFI pointer as an owned pointer.
+    ///
+    /// If `self` has ownership of the underlying pointer, it will "steal" ownership of it.
     fn into_ptr(self) -> *mut ffi::PyObject;
 }
 
@@ -74,10 +133,12 @@ pub trait ToPyObject {
     fn to_object(&self, py: Python<'_>) -> PyObject;
 }
 
-/// This trait has two implementations: The slow one is implemented for
-/// all [ToPyObject] and creates a new object using [ToPyObject::to_object],
-/// while the fast one is only implemented for AsPyPointer (we know
-/// that every AsPyPointer is also ToPyObject) and uses [AsPyPointer::as_ptr()]
+/// A deprecated conversion trait which relied on the unstable `specialization` feature
+/// of the Rust language.
+#[deprecated(
+    since = "0.17.0",
+    note = "this trait is no longer used by PyO3, use ToPyObject or IntoPy<PyObject>"
+)]
 pub trait ToBorrowedObject: ToPyObject {
     /// Converts self into a Python object and calls the specified closure
     /// on the native FFI pointer underlying the Python object.
@@ -97,6 +158,7 @@ pub trait ToBorrowedObject: ToPyObject {
     }
 }
 
+#[allow(deprecated)]
 impl<T> ToBorrowedObject for T where T: ToPyObject {}
 
 /// Defines a conversion from a Rust type to a Python object.
@@ -184,17 +246,32 @@ pub trait IntoPy<T>: Sized {
     fn into_py(self, py: Python<'_>) -> T;
 }
 
-/// `FromPyObject` is implemented by various types that can be extracted from
-/// a Python object reference.
+/// Extract a type from a Python object.
 ///
-/// Normal usage is through the helper methods `Py::extract` or `PyAny::extract`:
 ///
-/// ```rust,ignore
-/// let obj: Py<PyAny> = ...;
-/// let value: &TargetType = obj.extract(py)?;
+/// Normal usage is through the `extract` methods on [`Py`] and  [`PyAny`], which forward to this trait.
 ///
-/// let any: &PyAny = ...;
-/// let value: &TargetType = any.extract()?;
+/// # Examples
+///
+/// ```rust
+/// use pyo3::prelude::*;
+/// use pyo3::types::PyString;
+///
+/// # fn main() -> PyResult<()> {
+/// Python::with_gil(|py| {
+///     let obj: Py<PyString> = PyString::new(py, "blah").into();
+///
+///     // Straight from an owned reference
+///     let s: &str = obj.extract(py)?;
+/// #   assert_eq!(s, "blah");
+///
+///     // Or from a borrowed reference
+///     let obj: &PyString = obj.as_ref(py);
+///     let s: &str = obj.extract()?;
+/// #   assert_eq!(s, "blah");
+/// #   Ok(())
+/// })
+/// # }
 /// ```
 ///
 /// Note: depending on the implementation, the lifetime of the extracted result may
@@ -298,7 +375,7 @@ where
 
 impl<'a, T> FromPyObject<'a> for PyRefMut<'a, T>
 where
-    T: PyClass,
+    T: PyClass<Frozen = False>,
 {
     fn extract(obj: &'a PyAny) -> PyResult<Self> {
         let cell: &PyCell<T> = PyTryFrom::try_from(obj)?;
@@ -520,6 +597,23 @@ where
         NonNull::new(ptr as *mut Self).map(|p| &*p.as_ptr())
     }
 }
+
+/// ```rust,compile_fail
+/// use pyo3::prelude::*;
+///
+/// #[pyclass]
+/// struct TestClass {
+///     num: u32,
+/// }
+///
+/// let t = TestClass { num: 10 };
+///
+/// Python::with_gil(|py| {
+///     let pyvalue = Py::new(py, t).unwrap().to_object(py);
+///     let t: TestClass = pyvalue.extract(py).unwrap();
+/// })
+/// ```
+mod test_no_clone {}
 
 #[cfg(test)]
 mod tests {

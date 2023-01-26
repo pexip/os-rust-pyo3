@@ -1,15 +1,13 @@
 // Copyright (c) 2017-present PyO3 Project and Contributors
 
 use crate::panic::PanicException;
-use crate::type_object::PyTypeObject;
+use crate::type_object::PyTypeInfo;
 use crate::types::{PyTraceback, PyType};
 use crate::{
     exceptions::{self, PyBaseException},
     ffi,
 };
-use crate::{
-    AsPyPointer, IntoPy, IntoPyPointer, Py, PyAny, PyObject, Python, ToBorrowedObject, ToPyObject,
-};
+use crate::{AsPyPointer, IntoPy, IntoPyPointer, Py, PyAny, PyObject, Python, ToPyObject};
 use std::borrow::Cow;
 use std::cell::UnsafeCell;
 use std::ffi::CString;
@@ -79,20 +77,45 @@ impl PyErr {
     /// If an error occurs during normalization (for example if `T` is not a Python type which
     /// extends from `BaseException`), then a different error may be produced during normalization.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```ignore
-    /// return Err(PyErr::new::<exceptions::PyTypeError, _>("Error message"));
+    /// ```
+    /// use pyo3::prelude::*;
+    /// use pyo3::exceptions::PyTypeError;
+    ///
+    /// #[pyfunction]
+    /// fn always_throws() -> PyResult<()> {
+    ///     Err(PyErr::new::<PyTypeError, _>("Error message"))
+    /// }
+    /// #
+    /// # Python::with_gil(|py| {
+    /// #     let fun = pyo3::wrap_pyfunction!(always_throws, py).unwrap();
+    /// #     let err = fun.call0().expect_err("called a function that should always return an error but the return value was Ok");
+    /// #     assert!(err.is_instance_of::<PyTypeError>(py))
+    /// # });
     /// ```
     ///
-    /// In most cases, you can use a concrete exception's constructor instead, which is equivalent:
-    /// ```ignore
-    /// return Err(exceptions::PyTypeError::new_err("Error message"));
+    /// In most cases, you can use a concrete exception's constructor instead:
+    ///
+    /// ```
+    /// use pyo3::prelude::*;
+    /// use pyo3::exceptions::PyTypeError;
+    ///
+    /// #[pyfunction]
+    /// fn always_throws() -> PyResult<()> {
+    ///     Err(PyTypeError::new_err("Error message"))
+    /// }
+    /// #
+    /// # Python::with_gil(|py| {
+    /// #     let fun = pyo3::wrap_pyfunction!(always_throws, py).unwrap();
+    /// #     let err = fun.call0().expect_err("called a function that should always return an error but the return value was Ok");
+    /// #     assert!(err.is_instance_of::<PyTypeError>(py))
+    /// # });
     /// ```
     #[inline]
     pub fn new<T, A>(args: A) -> PyErr
     where
-        T: PyTypeObject,
+        T: PyTypeInfo,
         A: PyErrArguments + Send + Sync + 'static,
     {
         PyErr::from_state(PyErrState::LazyTypeAndValue {
@@ -137,7 +160,10 @@ impl PyErr {
     ///
     /// # Examples
     /// ```rust
-    /// use pyo3::{exceptions::PyTypeError, types::PyType, IntoPy, PyErr, Python};
+    /// use pyo3::prelude::*;
+    /// use pyo3::exceptions::PyTypeError;
+    /// use pyo3::types::{PyType, PyString};
+    ///
     /// Python::with_gil(|py| {
     ///     // Case #1: Exception object
     ///     let err = PyErr::from_value(PyTypeError::new_err("some type error").value(py));
@@ -148,7 +174,7 @@ impl PyErr {
     ///     assert_eq!(err.to_string(), "TypeError: ");
     ///
     ///     // Case #3: Invalid exception value
-    ///     let err = PyErr::from_value("foo".into_py(py).as_ref(py));
+    ///     let err = PyErr::from_value(PyString::new(py, "foo").into());
     ///     assert_eq!(
     ///         err.to_string(),
     ///         "TypeError: exceptions must derive from BaseException"
@@ -411,11 +437,11 @@ impl PyErr {
     /// If `exc` is a tuple, all exceptions in the tuple (and recursively in subtuples) are searched for a match.
     pub fn matches<T>(&self, py: Python<'_>, exc: T) -> bool
     where
-        T: ToBorrowedObject,
+        T: ToPyObject,
     {
-        exc.with_borrowed_ptr(py, |exc| unsafe {
-            ffi::PyErr_GivenExceptionMatches(self.type_ptr(py), exc) != 0
-        })
+        unsafe {
+            ffi::PyErr_GivenExceptionMatches(self.type_ptr(py), exc.to_object(py).as_ptr()) != 0
+        }
     }
 
     /// Returns true if the current exception is instance of `T`.
@@ -428,7 +454,7 @@ impl PyErr {
     #[inline]
     pub fn is_instance_of<T>(&self, py: Python<'_>) -> bool
     where
-        T: PyTypeObject,
+        T: PyTypeInfo,
     {
         self.is_instance(py, T::type_object(py))
     }
@@ -437,11 +463,14 @@ impl PyErr {
     /// This is the opposite of `PyErr::fetch()`.
     #[inline]
     pub fn restore(self, py: Python<'_>) {
-        let (ptype, pvalue, ptraceback) = self
-            .state
-            .into_inner()
-            .expect("Cannot restore a PyErr while normalizing it")
-            .into_ffi_tuple(py);
+        let state = match self.state.into_inner() {
+            Some(state) => state,
+            // Safety: restore takes `self` by value so nothing else is accessing this err
+            // and the invariant is that state is always defined except during make_normalized
+            None => unsafe { std::hint::unreachable_unchecked() },
+        };
+
+        let (ptype, pvalue, ptraceback) = state.into_ffi_tuple(py);
         unsafe { ffi::PyErr_Restore(ptype, pvalue, ptraceback) }
     }
 
@@ -499,6 +528,11 @@ impl PyErr {
                 cause.map_or(std::ptr::null_mut(), |err| err.into_value(py).into_ptr()),
             );
         }
+    }
+
+    pub(crate) fn write_unraisable(self, py: Python<'_>, context: PyObject) {
+        self.restore(py);
+        unsafe { ffi::PyErr_WriteUnraisable(context.as_ptr()) };
     }
 
     #[inline]
@@ -770,12 +804,12 @@ mod tests {
 
     #[test]
     fn set_typeerror() {
-        let gil = Python::acquire_gil();
-        let py = gil.python();
-        let err: PyErr = exceptions::PyTypeError::new_err(());
-        err.restore(py);
-        assert!(PyErr::occurred(py));
-        drop(PyErr::fetch(py));
+        Python::with_gil(|py| {
+            let err: PyErr = exceptions::PyTypeError::new_err(());
+            err.restore(py);
+            assert!(PyErr::occurred(py));
+            drop(PyErr::fetch(py));
+        });
     }
 
     #[test]

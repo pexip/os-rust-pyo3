@@ -5,6 +5,7 @@
 //! Trait and support implementation for implementing number protocol
 use crate::callback::IntoPyCallbackOutput;
 use crate::err::PyErr;
+use crate::pyclass::boolean_struct::False;
 use crate::{ffi, FromPyObject, PyClass, PyObject};
 
 /// Number interface
@@ -461,74 +462,76 @@ pub trait PyNumberROrProtocol<'p>: PyNumberProtocol<'p> {
     type Result: IntoPyCallbackOutput<PyObject>;
 }
 
-pub trait PyNumberIAddProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberIAddProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberISubProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberISubProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberIMulProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberIMulProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberIMatmulProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberIMatmulProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberITruedivProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberITruedivProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberIFloordivProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberIFloordivProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberIModProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberIModProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberIDivmodProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberIDivmodProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberIPowProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberIPowProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
     // See https://bugs.python.org/issue36379
     type Modulo: FromPyObject<'p>;
 }
 
-pub trait PyNumberILShiftProtocol<'p>: PyNumberProtocol<'p> {
+#[allow(clippy::upper_case_acronyms)]
+pub trait PyNumberILShiftProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberIRShiftProtocol<'p>: PyNumberProtocol<'p> {
+#[allow(clippy::upper_case_acronyms)]
+pub trait PyNumberIRShiftProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberIAndProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberIAndProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberIXorProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberIXorProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
 
-pub trait PyNumberIOrProtocol<'p>: PyNumberProtocol<'p> {
+pub trait PyNumberIOrProtocol<'p>: PyNumberProtocol<'p> + PyClass<Frozen = False> {
     type Other: FromPyObject<'p>;
     type Result: IntoPyCallbackOutput<()>;
 }
@@ -730,7 +733,7 @@ where
             .try_borrow_mut()?
             .__ipow__(
                 extract_or_return_not_implemented!(other),
-                match modulo.extract(py) {
+                match modulo.to_borrowed_any(py).extract() {
                     Ok(value) => value,
                     Err(_) => {
                         let res = crate::ffi::Py_NotImplemented();

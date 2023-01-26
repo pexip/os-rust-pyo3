@@ -8,17 +8,17 @@
         rustdoc::bare_urls
     )
 )]
-#![warn(elided_lifetimes_in_paths, unused_lifetimes)]
+#![warn(rust_2018_idioms, unused_lifetimes)]
 // Deny some lints in doctests.
 // Use `#[allow(...)]` locally to override.
 #![doc(test(attr(
     deny(
-        elided_lifetimes_in_paths,
+        rust_2018_idioms,
         unused_lifetimes,
         rust_2021_prelude_collisions,
         warnings
     ),
-    allow(unused_variables, unused_assignments)
+    allow(unused_variables, unused_assignments, unused_extern_crates)
 )))]
 
 //! Rust bindings to the Python interpreter.
@@ -72,8 +72,6 @@
 //! The following features are turned on by default:
 //! - `macros`: Enables various macros, including all the attribute macros excluding the deprecated
 //! `#[pyproto]` attribute.
-//! - `pyproto`: Adds the deprecated `#[pyproto]` attribute macro. Likely to become optional and
-//! then removed in the future.
 //!
 //! ## Optional feature flags
 //!
@@ -89,9 +87,11 @@
 //! - `multiple-pymethods`: Enables the use of multiple [`#[pymethods]`](macro@crate::pymethods)
 //! blocks per [`#[pyclass]`](macro@crate::pyclass). This adds a dependency on the [inventory]
 //! crate, which is not supported on all platforms.
+//! - `pyproto`: Enables the deprecated `#[pyproto]` attribute macro. This will be removed in PyO3 0.18.
 //!
 //! The following features enable interactions with other crates in the Rust ecosystem:
 //! - [`anyhow`]: Enables a conversion from [anyhow]’s [`Error`][anyhow_error] type to [`PyErr`].
+//! - [`chrono`]: Enables a conversion from [chrono]'s structures to the equivalent Python ones.
 //! - [`eyre`]: Enables a conversion from [eyre]’s [`Report`] type to [`PyErr`].
 //! - [`hashbrown`]: Enables conversions between Python objects and [hashbrown]'s [`HashMap`] and
 //! [`HashSet`] types.
@@ -294,9 +294,11 @@
 //! [Features chapter of the guide]: https://pyo3.rs/latest/features.html#features-reference "Features Reference - PyO3 user guide"
 //! [`Ungil`]: crate::marker::Ungil
 pub use crate::class::*;
+#[allow(deprecated)]
+pub use crate::conversion::ToBorrowedObject;
 pub use crate::conversion::{
     AsPyPointer, FromPyObject, FromPyPointer, IntoPy, IntoPyPointer, PyTryFrom, PyTryInto,
-    ToBorrowedObject, ToPyObject,
+    ToPyObject,
 };
 pub use crate::err::{PyDowncastError, PyErr, PyErrArguments, PyResult};
 #[cfg(not(PyPy))]
@@ -388,24 +390,21 @@ mod version;
 
 pub use crate::conversions::*;
 
-#[doc(hidden)]
-#[deprecated(
-    since = "0.15.0",
-    note = "please import this with `use pyo3::...` or from the prelude instead"
-)]
-#[cfg(feature = "macros")]
-pub mod proc_macro {
-    #[cfg(feature = "pyproto")]
-    pub use pyo3_macros::pyproto;
-    pub use pyo3_macros::{pyclass, pyfunction, pymethods, pymodule};
-}
-
 #[cfg(all(feature = "macros", feature = "pyproto"))]
 pub use pyo3_macros::pyproto;
 #[cfg(feature = "macros")]
-pub use pyo3_macros::{
-    pyclass, pyfunction, pymethods, pymodule, wrap_pyfunction, wrap_pymodule, FromPyObject,
-};
+pub use pyo3_macros::{pyfunction, pymethods, pymodule, FromPyObject};
+
+/// A proc macro used to expose Rust structs and fieldless enums as Python objects.
+///
+#[cfg_attr(docsrs, cfg_attr(docsrs, doc = include_str!("../guide/pyclass_parameters.md")))]
+///
+/// For more on creating Python classes,
+/// see the [class section of the guide][1].
+///
+/// [1]: https://pyo3.rs/latest/class.html
+#[cfg(feature = "macros")]
+pub use pyo3_macros::pyclass;
 
 #[cfg(feature = "macros")]
 #[macro_use]
@@ -454,6 +453,8 @@ pub mod doc_test {
         "guide/src/faq.md" => guide_faq_md,
         "guide/src/features.md" => guide_features_md,
         "guide/src/function.md" => guide_function_md,
+        "guide/src/function/error_handling.md" => guide_function_error_handling_md,
+        "guide/src/function/signature.md" => guide_function_signature_md,
         "guide/src/memory.md" => guide_memory_md,
         "guide/src/migration.md" => guide_migration_md,
         "guide/src/module.md" => guide_module_md,
