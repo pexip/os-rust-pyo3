@@ -2,10 +2,11 @@
 
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::types::{IntoPyDict, PyList, PyMapping, PySequence};
-use pyo3::{ffi, prelude::*, AsPyPointer};
+use pyo3::{ffi, prelude::*};
 
 use pyo3::py_run;
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
 #[pyclass]
@@ -319,22 +320,20 @@ fn test_option_list_get() {
 
 #[test]
 fn sequence_is_not_mapping() {
-    #[allow(deprecated)]
-    let gil = Python::acquire_gil();
-    let py = gil.python();
+    Python::with_gil(|py| {
+        let list = PyCell::new(
+            py,
+            OptionList {
+                items: vec![Some(1), None],
+            },
+        )
+        .unwrap();
 
-    let list = PyCell::new(
-        py,
-        OptionList {
-            items: vec![Some(1), None],
-        },
-    )
-    .unwrap();
+        PySequence::register::<OptionList>(py).unwrap();
 
-    PySequence::register::<OptionList>(py).unwrap();
-
-    assert!(list.as_ref().downcast::<PyMapping>().is_err());
-    assert!(list.as_ref().downcast::<PySequence>().is_ok());
+        assert!(list.as_ref().downcast::<PyMapping>().is_err());
+        assert!(list.as_ref().downcast::<PySequence>().is_ok());
+    })
 }
 
 #[test]

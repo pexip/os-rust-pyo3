@@ -1,7 +1,0 @@
---- pyo3.old/Cargo.toml	2022-08-24 02:27:41.000000000 +0100
-+++ pyo3/Cargo.toml	2022-08-28 17:46:08.993592193 +0100
-@@ -188,3 +188,3 @@
- [dev-dependencies.widestring]
--version = "0.5.1"
-+version = ">=0.4"
- 

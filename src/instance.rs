@@ -1,13 +1,12 @@
-use crate::pyclass::boolean_struct::False;
-// Copyright (c) 2017-present PyO3 Project and Contributors
 use crate::conversion::PyTryFrom;
 use crate::err::{self, PyDowncastError, PyErr, PyResult};
 use crate::gil;
 use crate::pycell::{PyBorrowError, PyBorrowMutError, PyCell};
+use crate::pyclass::boolean_struct::{False, True};
 use crate::types::{PyDict, PyString, PyTuple};
 use crate::{
-    ffi, AsPyPointer, FromPyObject, IntoPy, IntoPyPointer, PyAny, PyClass, PyClassInitializer,
-    PyRef, PyRefMut, PyTypeInfo, Python, ToPyObject,
+    ffi, AsPyPointer, FromPyObject, IntoPy, PyAny, PyClass, PyClassInitializer, PyRef, PyRefMut,
+    PyTypeInfo, Python, ToPyObject,
 };
 use std::marker::PhantomData;
 use std::mem;
@@ -113,7 +112,7 @@ pub unsafe trait PyNativeType: Sized {
 /// #         let m = pyo3::types::PyModule::new(py, "test")?;
 /// #         m.add_class::<Foo>()?;
 /// #
-/// #         let foo: &PyCell<Foo> = pyo3::PyTryFrom::try_from(m.getattr("Foo")?.call0()?)?;
+/// #         let foo: &PyCell<Foo> = m.getattr("Foo")?.call0()?.downcast()?;
 /// #         let dict = &foo.borrow().inner;
 /// #         let dict: &PyDict = dict.as_ref(py);
 /// #
@@ -150,7 +149,7 @@ pub unsafe trait PyNativeType: Sized {
 /// #         let m = pyo3::types::PyModule::new(py, "test")?;
 /// #         m.add_class::<Foo>()?;
 /// #
-/// #         let foo: &PyCell<Foo> = pyo3::PyTryFrom::try_from(m.getattr("Foo")?.call0()?)?;
+/// #         let foo: &PyCell<Foo> = m.getattr("Foo")?.call0()?.downcast()?;
 /// #         let bar = &foo.borrow().inner;
 /// #         let bar: &Bar = &*bar.borrow(py);
 /// #
@@ -357,6 +356,34 @@ where
     }
 }
 
+impl<T> Py<T> {
+    /// Returns the raw FFI pointer represented by self.
+    ///
+    /// # Safety
+    ///
+    /// Callers are responsible for ensuring that the pointer does not outlive self.
+    ///
+    /// The reference is borrowed; callers should not decrease the reference count
+    /// when they are finished with the pointer.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut ffi::PyObject {
+        self.0.as_ptr()
+    }
+
+    /// Returns an owned raw FFI pointer represented by self.
+    ///
+    /// # Safety
+    ///
+    /// The reference is owned; when finished the caller should either transfer ownership
+    /// of the pointer or decrease the reference count (e.g. with [`pyo3::ffi::Py_DecRef`](crate::ffi::Py_DecRef)).
+    #[inline]
+    pub fn into_ptr(self) -> *mut ffi::PyObject {
+        let ptr = self.0.as_ptr();
+        std::mem::forget(self);
+        ptr
+    }
+}
+
 impl<T> Py<T>
 where
     T: PyClass,
@@ -365,6 +392,8 @@ where
     ///
     /// This borrow lasts while the returned [`PyRef`] exists.
     /// Multiple immutable borrows can be taken out at the same time.
+    ///
+    /// For frozen classes, the simpler [`get`][Self::get] is available.
     ///
     /// Equivalent to `self.as_ref(py).borrow()` -
     /// see [`PyCell::borrow`](crate::pycell::PyCell::borrow).
@@ -429,7 +458,7 @@ where
     ///  ```
     ///
     /// # Panics
-    /// Panics if the value is currently mutably borrowed. For a non-panicking variant, use
+    /// Panics if the value is currently borrowed. For a non-panicking variant, use
     /// [`try_borrow_mut`](#method.try_borrow_mut).
     pub fn borrow_mut<'py>(&'py self, py: Python<'py>) -> PyRefMut<'py, T>
     where
@@ -443,6 +472,8 @@ where
     /// The borrow lasts while the returned [`PyRef`] exists.
     ///
     /// This is the non-panicking variant of [`borrow`](#method.borrow).
+    ///
+    /// For frozen classes, the simpler [`get`][Self::get] is available.
     ///
     /// Equivalent to `self.as_ref(py).borrow_mut()` -
     /// see [`PyCell::try_borrow`](crate::pycell::PyCell::try_borrow).
@@ -466,6 +497,41 @@ where
         T: PyClass<Frozen = False>,
     {
         self.as_ref(py).try_borrow_mut()
+    }
+
+    /// Provide an immutable borrow of the value `T` without acquiring the GIL.
+    ///
+    /// This is available if the class is [`frozen`][macro@crate::pyclass] and [`Sync`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// # use pyo3::prelude::*;
+    ///
+    /// #[pyclass(frozen)]
+    /// struct FrozenCounter {
+    ///     value: AtomicUsize,
+    /// }
+    ///
+    /// let cell  = Python::with_gil(|py| {
+    ///     let counter = FrozenCounter { value: AtomicUsize::new(0) };
+    ///
+    ///     Py::new(py, counter).unwrap()
+    /// });
+    ///
+    /// cell.get().value.fetch_add(1, Ordering::Relaxed);
+    /// ```
+    pub fn get(&self) -> &T
+    where
+        T: PyClass<Frozen = True> + Sync,
+    {
+        let any = self.as_ptr() as *const PyAny;
+        // SAFETY: The class itself is frozen and `Sync` and we do not access anything but `cell.contents.value`.
+        unsafe {
+            let cell: &PyCell<T> = PyNativeType::unchecked_downcast(&*any);
+            &*cell.get_ptr()
+        }
     }
 }
 
@@ -517,6 +583,13 @@ impl<T> Py<T> {
     /// This is equivalent to the Python expression `self is None`.
     pub fn is_none(&self, _py: Python<'_>) -> bool {
         unsafe { ffi::Py_None() == self.as_ptr() }
+    }
+
+    /// Returns whether the object is Ellipsis, e.g. `...`.
+    ///
+    /// This is equivalent to the Python expression `self is ...`.
+    pub fn is_ellipsis(&self) -> bool {
+        unsafe { ffi::Py_Ellipsis() == self.as_ptr() }
     }
 
     /// Returns whether the object is considered to be true.
@@ -605,12 +678,9 @@ impl<T> Py<T> {
         let attr_name = attr_name.into_py(py);
         let value = value.into_py(py);
 
-        unsafe {
-            err::error_on_minusone(
-                py,
-                ffi::PyObject_SetAttr(self.as_ptr(), attr_name.as_ptr(), value.as_ptr()),
-            )
-        }
+        err::error_on_minusone(py, unsafe {
+            ffi::PyObject_SetAttr(self.as_ptr(), attr_name.as_ptr(), value.as_ptr())
+        })
     }
 
     /// Calls the object.
@@ -623,7 +693,7 @@ impl<T> Py<T> {
         kwargs: Option<&PyDict>,
     ) -> PyResult<PyObject> {
         let args = args.into_py(py);
-        let kwargs = kwargs.into_ptr();
+        let kwargs = kwargs.map_or(std::ptr::null_mut(), |p| p.into_ptr());
 
         unsafe {
             let ret = PyObject::from_owned_ptr_or_err(
@@ -680,7 +750,7 @@ impl<T> Py<T> {
     {
         let callee = self.getattr(py, name)?;
         let args: Py<PyTuple> = args.into_py(py);
-        let kwargs = kwargs.into_ptr();
+        let kwargs = kwargs.map_or(std::ptr::null_mut(), |p| p.into_ptr());
 
         unsafe {
             let result = PyObject::from_owned_ptr_or_err(
@@ -855,7 +925,14 @@ impl<T> IntoPy<PyObject> for Py<T> {
     }
 }
 
-impl<T> AsPyPointer for Py<T> {
+impl<T> IntoPy<PyObject> for &'_ Py<T> {
+    #[inline]
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        self.to_object(py)
+    }
+}
+
+unsafe impl<T> crate::AsPyPointer for Py<T> {
     /// Gets the underlying FFI pointer, returns a borrowed pointer.
     #[inline]
     fn as_ptr(&self) -> *mut ffi::PyObject {
@@ -863,21 +940,18 @@ impl<T> AsPyPointer for Py<T> {
     }
 }
 
-impl<T> IntoPyPointer for Py<T> {
-    /// Gets the underlying FFI pointer, returns a owned pointer.
-    #[inline]
-    #[must_use]
-    fn into_ptr(self) -> *mut ffi::PyObject {
-        self.into_non_null().as_ptr()
+impl std::convert::From<&'_ PyAny> for PyObject {
+    fn from(obj: &PyAny) -> Self {
+        unsafe { Py::from_borrowed_ptr(obj.py(), obj.as_ptr()) }
     }
 }
 
 impl<T> std::convert::From<&'_ T> for PyObject
 where
-    T: AsPyPointer + PyNativeType,
+    T: PyNativeType + AsRef<PyAny>,
 {
     fn from(obj: &T) -> Self {
-        unsafe { Py::from_borrowed_ptr(obj.py(), obj.as_ptr()) }
+        unsafe { Py::from_borrowed_ptr(obj.py(), obj.as_ref().as_ptr()) }
     }
 }
 
@@ -991,15 +1065,75 @@ impl<T> std::fmt::Debug for Py<T> {
 pub type PyObject = Py<PyAny>;
 
 impl PyObject {
-    /// Casts the PyObject to a concrete Python object type.
+    /// Downcast this `PyObject` to a concrete Python type or pyclass.
     ///
-    /// This can cast only to native Python types, not types implemented in Rust. For a more
-    /// flexible alternative, see [`Py::extract`](struct.Py.html#method.extract).
-    pub fn cast_as<'p, D>(&'p self, py: Python<'p>) -> Result<&'p D, PyDowncastError<'_>>
+    /// Note that you can often avoid downcasting yourself by just specifying
+    /// the desired type in function or method signatures.
+    /// However, manual downcasting is sometimes necessary.
+    ///
+    /// For extracting a Rust-only type, see [`Py::extract`](struct.Py.html#method.extract).
+    ///
+    /// # Example: Downcasting to a specific Python object
+    ///
+    /// ```rust
+    /// use pyo3::prelude::*;
+    /// use pyo3::types::{PyDict, PyList};
+    ///
+    /// Python::with_gil(|py| {
+    ///     let any: PyObject = PyDict::new(py).into();
+    ///
+    ///     assert!(any.downcast::<PyDict>(py).is_ok());
+    ///     assert!(any.downcast::<PyList>(py).is_err());
+    /// });
+    /// ```
+    ///
+    /// # Example: Getting a reference to a pyclass
+    ///
+    /// This is useful if you want to mutate a `PyObject` that
+    /// might actually be a pyclass.
+    ///
+    /// ```rust
+    /// # fn main() -> Result<(), pyo3::PyErr> {
+    /// use pyo3::prelude::*;
+    ///
+    /// #[pyclass]
+    /// struct Class {
+    ///     i: i32,
+    /// }
+    ///
+    /// Python::with_gil(|py| {
+    ///     let class: PyObject = Py::new(py, Class { i: 0 }).unwrap().into_py(py);
+    ///
+    ///     let class_cell: &PyCell<Class> = class.downcast(py)?;
+    ///
+    ///     class_cell.borrow_mut().i += 1;
+    ///
+    ///     // Alternatively you can get a `PyRefMut` directly
+    ///     let class_ref: PyRefMut<'_, Class> = class.extract(py)?;
+    ///     assert_eq!(class_ref.i, 1);
+    ///     Ok(())
+    /// })
+    /// # }
+    /// ```
+    #[inline]
+    pub fn downcast<'p, T>(&'p self, py: Python<'p>) -> Result<&T, PyDowncastError<'_>>
     where
-        D: PyTryFrom<'p>,
+        T: PyTryFrom<'p>,
     {
-        <D as PyTryFrom<'_>>::try_from(unsafe { py.from_borrowed_ptr::<PyAny>(self.as_ptr()) })
+        <T as PyTryFrom<'_>>::try_from(self.as_ref(py))
+    }
+
+    /// Casts the PyObject to a concrete Python object type without checking validity.
+    ///
+    /// # Safety
+    ///
+    /// Callers must ensure that the type is valid or risk type confusion.
+    #[inline]
+    pub unsafe fn downcast_unchecked<'p, T>(&'p self, py: Python<'p>) -> &T
+    where
+        T: PyTryFrom<'p>,
+    {
+        <T as PyTryFrom<'_>>::try_from_unchecked(self.as_ref(py))
     }
 }
 
@@ -1119,6 +1253,22 @@ a = A()
             instance.setattr(py, "foo", "bar").unwrap_err();
             Ok(())
         })
+    }
+
+    #[test]
+    fn test_is_ellipsis() {
+        Python::with_gil(|py| {
+            let v = py
+                .eval("...", None, None)
+                .map_err(|e| e.display(py))
+                .unwrap()
+                .to_object(py);
+
+            assert!(v.is_ellipsis());
+
+            let not_ellipsis = 5.to_object(py);
+            assert!(!not_ellipsis.is_ellipsis());
+        });
     }
 
     #[cfg(feature = "macros")]

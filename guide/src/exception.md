@@ -2,7 +2,7 @@
 
 ## Defining a new exception
 
-You can use the [`create_exception!`] macro to define a new exception type:
+Use the [`create_exception!`] macro:
 
 ```rust
 use pyo3::create_exception;
@@ -25,7 +25,11 @@ create_exception!(mymodule, CustomError, PyException);
 
 Python::with_gil(|py| {
     let ctx = [("CustomError", py.get_type::<CustomError>())].into_py_dict(py);
-    pyo3::py_run!(py, *ctx, "assert str(CustomError) == \"<class 'mymodule.CustomError'>\"");
+    pyo3::py_run!(
+        py,
+        *ctx,
+        "assert str(CustomError) == \"<class 'mymodule.CustomError'>\""
+    );
     pyo3::py_run!(py, *ctx, "assert CustomError('oops').args == ('oops',)");
 });
 ```
@@ -35,7 +39,6 @@ the module like this, so that it is importable from Python:
 
 ```rust
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
 use pyo3::exceptions::PyException;
 
 pyo3::create_exception!(mymodule, CustomError, PyException);
@@ -47,12 +50,11 @@ fn mymodule(py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
     Ok(())
 }
-
 ```
 
 ## Raising an exception
 
-As described in the [function error handling](./function/error_handling.md) chapter, to raise an exception from a `#[pyfunction]` or `#[pymethods]`, return an `Err(PyErr)`. PyO3 will automatically raise this exception for you when returing the result to Python.
+As described in the [function error handling](./function/error_handling.md) chapter, to raise an exception from a `#[pyfunction]` or `#[pymethods]`, return an `Err(PyErr)`. PyO3 will automatically raise this exception for you when returning the result to Python.
 
 You can also manually write and fetch errors in the Python interpreter's global state:
 
@@ -77,10 +79,10 @@ use pyo3::Python;
 use pyo3::types::{PyBool, PyList};
 
 Python::with_gil(|py| {
-    assert!(PyBool::new(py, true).is_instance_of::<PyBool>().unwrap());
+    assert!(PyBool::new(py, true).is_instance_of::<PyBool>());
     let list = PyList::new(py, &[1, 2, 3, 4]);
-    assert!(!list.is_instance_of::<PyBool>().unwrap());
-    assert!(list.is_instance_of::<PyList>().unwrap());
+    assert!(!list.is_instance_of::<PyBool>());
+    assert!(list.is_instance_of::<PyList>());
 });
 ```
 
@@ -115,7 +117,6 @@ fn tell(file: &PyAny) -> PyResult<u64> {
         Ok(x) => x.extract::<u64>(),
     }
 }
-
 ```
 
 [`pyo3::exceptions`]({{#PYO3_DOCS_URL}}/pyo3/exceptions/index.html)

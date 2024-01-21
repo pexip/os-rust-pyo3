@@ -1,5 +1,3 @@
-// Copyright (c) 2017-present PyO3 Project and Contributors
-
 //! PyO3's prelude.
 //!
 //! The purpose of this module is to alleviate imports of many commonly used items of the PyO3 crate
@@ -10,11 +8,8 @@
 //! use pyo3::prelude::*;
 //! ```
 
-pub use crate::conversion::{
-    FromPyObject, IntoPy, IntoPyPointer, PyTryFrom, PyTryInto, ToPyObject,
-};
+pub use crate::conversion::{FromPyObject, IntoPy, PyTryFrom, PyTryInto, ToPyObject};
 pub use crate::err::{PyErr, PyResult};
-pub use crate::gil::GILGuard;
 pub use crate::instance::{Py, PyObject};
 pub use crate::marker::Python;
 pub use crate::pycell::{PyCell, PyRef, PyRefMut};
@@ -23,9 +18,6 @@ pub use crate::types::{PyAny, PyModule};
 
 #[cfg(feature = "macros")]
 pub use pyo3_macros::{pyclass, pyfunction, pymethods, pymodule, FromPyObject};
-
-#[cfg(all(feature = "macros", feature = "pyproto"))]
-pub use pyo3_macros::pyproto;
 
 #[cfg(feature = "macros")]
 pub use crate::wrap_pyfunction;

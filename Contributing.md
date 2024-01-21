@@ -51,7 +51,7 @@ There are some specific areas of focus where help is currently needed for the do
 You can build the docs (including all features) with
 
 ```shell
-cargo xtask doc --open
+nox -s docs -- open
 ```
 
 #### Doctests
@@ -95,8 +95,10 @@ Tests run with all supported Python versions with the latest stable Rust compile
 If you are adding a new feature, you should add it to the `full` feature in our *Cargo.toml** so that it is tested in CI.
 
 You can run these tests yourself with
-```cargo xtask ci```
-See [its documentation](https://github.com/PyO3/pyo3/tree/main/xtask#readme) for more commands you can run.
+```nox```
+and
+```nox -l```
+lists further commands you can run.
 
 ### Documenting changes
 
@@ -108,6 +110,38 @@ To include your changes in the release notes, you should create one (or more) ne
 - `changed` - for features which already existed but have been altered or deprecated
 - `removed` - for features which have been removed
 - `fixed` - for "changed" features which were classed as a bugfix
+
+Docs-only PRs do not need news items; start your PR title with `docs:` to skip the check.
+
+### Style guide
+
+#### Generic code
+
+PyO3 has a lot of generic APIs to increase usability. These can come at the cost of generic code bloat. Where reasonable, try to implement a concrete sub-portion of generic functions. There are two forms of this:
+
+- If the concrete sub-portion doesn't benefit from re-use by other functions, name it `inner` and keep it as a local to the function.
+- If the concrete sub-portion is re-used by other functions, preferably name it `_foo` and place it directly below `foo` in the source code (where `foo` is the original generic function).
+
+#### FFI calls
+
+PyO3 makes a lot of FFI calls to Python's C API using raw pointers. Where possible try to avoid using pointers-to-temporaries in expressions:
+
+```rust
+// dangerous
+pyo3::ffi::Something(name.to_object(py).as_ptr());
+
+// because the following refactoring is a use-after-free error:
+let name = name.to_object(py).as_ptr();
+pyo3::ffi::Something(name)
+```
+
+Instead, prefer to bind the safe owned `PyObject` wrapper before passing to ffi functions:
+
+```rust
+let name: PyObject = name.to_object(py);
+pyo3::ffi::Something(name.as_ptr())
+// name will automatically be freed when it falls out of scope
+```
 
 ## Python and Rust version support policy
 
@@ -133,9 +167,9 @@ CI tests both the most recent stable Rust version and the minimum supported Rust
 
 PyO3 has two sets of benchmarks for evaluating some aspects of its performance. The benchmark suite is currently very small - please open PRs with new benchmarks if you're interested in helping to expand it!
 
-First, there are Rust-based benchmarks located in the `benches` subdirectory. As long as you have a nightly rust compiler available on your system, you can run these benchmarks with:
+First, there are Rust-based benchmarks located in the `pyo3-benches` subdirectory. You can run these benchmarks with:
 
-    cargo +nightly bench
+    nox -s bench
 
 Second, there is a Python-based benchmark contained in the `pytests` subdirectory. You can read more about it [here](pytests).
 
@@ -145,7 +179,7 @@ You can view what code is and isn't covered by PyO3's tests. We aim to have 100%
 
 - First, generate a `lcov.info` file with
 ```shell
-cargo xtask coverage
+nox -s coverage
 ```
 You can install an IDE plugin to view the coverage. For example, if you use VSCode:
 - Add the [coverage-gutters](https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters) plugin.

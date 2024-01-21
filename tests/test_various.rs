@@ -6,6 +6,7 @@ use pyo3::{py_run, PyCell};
 
 use std::fmt;
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
 #[pyclass]
@@ -136,6 +137,7 @@ fn add_module(py: Python<'_>, module: &PyModule) -> PyResult<()> {
     py.import("sys")?
         .dict()
         .get_item("modules")
+        .unwrap()
         .unwrap()
         .downcast::<PyDict>()?
         .set_item(module.name()?, module)

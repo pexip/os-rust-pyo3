@@ -10,6 +10,322 @@ To see unreleased changes, please see the [CHANGELOG on the main branch guide](h
 
 <!-- towncrier release notes start -->
 
+## [0.20.2] - 2024-01-04
+
+### Packaging
+
+- Pin `pyo3` and `pyo3-ffi` dependencies on `pyo3-build-config` to require the same patch version, i.e. `pyo3` 0.20.2 requires _exactly_ `pyo3-build-config` 0.20.2. [#3721](https://github.com/PyO3/pyo3/pull/3721)
+
+### Fixed
+
+- Fix compile failure when building `pyo3` 0.20.0 with latest `pyo3-build-config` 0.20.X. [#3724](https://github.com/PyO3/pyo3/pull/3724)
+- Fix docs.rs build. [#3722](https://github.com/PyO3/pyo3/pull/3722)
+
+## [0.20.1] - 2023-12-30
+
+### Added
+
+- Add optional `either` feature to add conversions for `either::Either<L, R>` sum type. [#3456](https://github.com/PyO3/pyo3/pull/3456)
+- Add optional `smallvec` feature to add conversions for `smallvec::SmallVec`. [#3507](https://github.com/PyO3/pyo3/pull/3507)
+- Add `take` and `into_inner` methods to `GILOnceCell` [#3556](https://github.com/PyO3/pyo3/pull/3556)
+- `#[classmethod]` methods can now also receive `Py<PyType>` as their first argument. [#3587](https://github.com/PyO3/pyo3/pull/3587)
+- `#[pyfunction(pass_module)]` can now also receive `Py<PyModule>` as their first argument. [#3587](https://github.com/PyO3/pyo3/pull/3587)
+- Add `traverse` method to `GILProtected`. [#3616](https://github.com/PyO3/pyo3/pull/3616)
+- Added `abi3-py312` feature [#3687](https://github.com/PyO3/pyo3/pull/3687)
+
+### Fixed
+
+- Fix minimum version specification for optional `chrono` dependency. [#3512](https://github.com/PyO3/pyo3/pull/3512)
+- Silenced new `clippy::unnecessary_fallible_conversions` warning when using a `Py<Self>` `self` receiver. [#3564](https://github.com/PyO3/pyo3/pull/3564)
+
+
+## [0.20.0] - 2023-10-11
+
+### Packaging
+
+- Dual-license PyO3 under either the Apache 2.0 OR the MIT license. This makes the project GPLv2 compatible. [#3108](https://github.com/PyO3/pyo3/pull/3108)
+- Update MSRV to Rust 1.56. [#3208](https://github.com/PyO3/pyo3/pull/3208)
+- Bump `indoc` dependency to 2.0 and `unindent` dependency to 0.2. [#3237](https://github.com/PyO3/pyo3/pull/3237)
+- Bump `syn` dependency to 2.0. [#3239](https://github.com/PyO3/pyo3/pull/3239)
+- Drop support for debug builds of Python 3.7. [#3387](https://github.com/PyO3/pyo3/pull/3387)
+- Bump `chrono` optional dependency to require 0.4.25 or newer. [#3427](https://github.com/PyO3/pyo3/pull/3427)
+- Support Python 3.12. [#3488](https://github.com/PyO3/pyo3/pull/3488)
+
+### Added
+
+- Support `__lt__`, `__le__`, `__eq__`, `__ne__`, `__gt__` and `__ge__` in `#[pymethods]`. [#3203](https://github.com/PyO3/pyo3/pull/3203)
+- Add FFI definition `Py_GETENV`. [#3336](https://github.com/PyO3/pyo3/pull/3336)
+- Add `as_ptr` and `into_ptr` inherent methods for `Py`, `PyAny`, `PyRef`, and `PyRefMut`. [#3359](https://github.com/PyO3/pyo3/pull/3359)
+- Implement `DoubleEndedIterator` for `PyTupleIterator` and `PyListIterator`. [#3366](https://github.com/PyO3/pyo3/pull/3366)
+- Add `#[pyclass(rename_all = "...")]` option: this allows renaming all getters and setters of a struct, or all variants of an enum. Available renaming rules are: `"camelCase"`, `"kebab-case"`, `"lowercase"`, `"PascalCase"`, `"SCREAMING-KEBAB-CASE"`, `"SCREAMING_SNAKE_CASE"`, `"snake_case"`, `"UPPERCASE"`. [#3384](https://github.com/PyO3/pyo3/pull/3384)
+- Add FFI definitions `PyObject_GC_IsTracked` and `PyObject_GC_IsFinalized` on Python 3.9 and up (PyPy 3.10 and up). [#3403](https://github.com/PyO3/pyo3/pull/3403)
+- Add types for `None`, `Ellipsis`, and `NotImplemented`. [#3408](https://github.com/PyO3/pyo3/pull/3408)
+- Add FFI definitions for the `Py_mod_multiple_interpreters` constant and its possible values. [#3494](https://github.com/PyO3/pyo3/pull/3494)
+- Add FFI definitions for `PyInterpreterConfig` struct, its constants and `Py_NewInterpreterFromConfig`. [#3502](https://github.com/PyO3/pyo3/pull/3502)
+
+### Changed
+
+- Change `PySet::discard` to return `PyResult<bool>` (previously returned nothing). [#3281](https://github.com/PyO3/pyo3/pull/3281)
+- Optimize implmentation of `IntoPy` for Rust tuples to Python tuples. [#3321](https://github.com/PyO3/pyo3/pull/3321)
+- Change `PyDict::get_item` to no longer suppress arbitrary exceptions (the return type is now `PyResult<Option<&PyAny>>` instead of `Option<&PyAny>`), and deprecate `PyDict::get_item_with_error`. [#3330](https://github.com/PyO3/pyo3/pull/3330)
+- Deprecate FFI definitions which are deprecated in Python 3.12. [#3336](https://github.com/PyO3/pyo3/pull/3336)
+- `AsPyPointer` is now an `unsafe trait`. [#3358](https://github.com/PyO3/pyo3/pull/3358)
+- Accept all `os.PathLike` values in implementation of `FromPyObject` for `PathBuf`. [#3374](https://github.com/PyO3/pyo3/pull/3374)
+- Add `__builtins__` to globals in `py.run()` and `py.eval()` if they're missing. [#3378](https://github.com/PyO3/pyo3/pull/3378)
+- Optimize implementation of `FromPyObject` for `BigInt` and `BigUint`. [#3379](https://github.com/PyO3/pyo3/pull/3379)
+- `PyIterator::from_object` and `PyByteArray::from` now take a single argument of type `&PyAny` (previously took two arguments `Python` and `AsPyPointer`). [#3389](https://github.com/PyO3/pyo3/pull/3389)
+- Replace `AsPyPointer` with `AsRef<PyAny>` as a bound in the blanket implementation of `From<&T> for PyObject`. [#3391](https://github.com/PyO3/pyo3/pull/3391)
+- Replace blanket `impl IntoPy<PyObject> for &T where T: AsPyPointer` with implementations of `impl IntoPy<PyObject>` for `&PyAny`, `&T where T: AsRef<PyAny>`, and `&Py<T>`. [#3393](https://github.com/PyO3/pyo3/pull/3393)
+- Preserve `std::io::Error` kind in implementation of `From<std::io::IntoInnerError>` for `PyErr` [#3396](https://github.com/PyO3/pyo3/pull/3396)
+- Try to select a relevant `ErrorKind` in implementation of `From<PyErr>` for `OSError` subclass. [#3397](https://github.com/PyO3/pyo3/pull/3397)
+- Retrieve the original `PyErr` in implementation of `From<std::io::Error>` for `PyErr` if the `std::io::Error` has been built using a Python exception (previously would create a new exception wrapping the `std::io::Error`). [#3402](https://github.com/PyO3/pyo3/pull/3402)
+- `#[pymodule]` will now return the same module object on repeated import by the same Python interpreter, on Python 3.9 and up. [#3446](https://github.com/PyO3/pyo3/pull/3446)
+- Truncate leap-seconds and warn when converting `chrono` types to Python `datetime` types (`datetime` cannot represent leap-seconds). [#3458](https://github.com/PyO3/pyo3/pull/3458)
+- `Err` returned from `#[pyfunction]` will now have a non-None `__context__` if called from inside a `catch` block. [#3455](https://github.com/PyO3/pyo3/pull/3455)
+- Deprecate undocumented `#[__new__]` form of `#[new]` attribute. [#3505](https://github.com/PyO3/pyo3/pull/3505)
+
+### Removed
+
+- Remove all functionality deprecated in PyO3 0.18, including `#[args]` attribute for `#[pymethods]`. [#3232](https://github.com/PyO3/pyo3/pull/3232)
+- Remove `IntoPyPointer` trait in favour of `into_ptr` inherent methods. [#3385](https://github.com/PyO3/pyo3/pull/3385)
+
+### Fixed
+
+- Handle exceptions properly in `PySet::discard`. [#3281](https://github.com/PyO3/pyo3/pull/3281)
+- The `PyTupleIterator` type returned by `PyTuple::iter` is now public and hence can be named by downstream crates. [#3366](https://github.com/PyO3/pyo3/pull/3366)
+- Linking of `PyOS_FSPath` on PyPy. [#3374](https://github.com/PyO3/pyo3/pull/3374)
+- Fix memory leak in `PyTypeBuilder::build`. [#3401](https://github.com/PyO3/pyo3/pull/3401)
+- Disable removed FFI definitions `_Py_GetAllocatedBlocks`, `_PyObject_GC_Malloc`, and `_PyObject_GC_Calloc` on Python 3.11 and up. [#3403](https://github.com/PyO3/pyo3/pull/3403)
+- Fix `ResourceWarning` and crashes related to GC when running with debug builds of CPython. [#3404](https://github.com/PyO3/pyo3/pull/3404)
+- Some-wrapping of `Option<T>` default arguments will no longer re-wrap `Some(T)` or expressions evaluating to `None`. [#3461](https://github.com/PyO3/pyo3/pull/3461)
+- Fix `IterNextOutput::Return` not returning a value on PyPy. [#3471](https://github.com/PyO3/pyo3/pull/3471)
+- Emit compile errors instead of ignoring macro invocations inside `#[pymethods]` blocks. [#3491](https://github.com/PyO3/pyo3/pull/3491)
+- Emit error on invalid arguments to `#[new]`, `#[classmethod]`, `#[staticmethod]`, and `#[classattr]`. [#3484](https://github.com/PyO3/pyo3/pull/3484)
+- Disable `PyMarshal_WriteObjectToString` from `PyMarshal_ReadObjectFromString` with the `abi3` feature. [#3490](https://github.com/PyO3/pyo3/pull/3490)
+- Fix FFI definitions for `_PyFrameEvalFunction` on Python 3.11 and up (it now receives a `_PyInterpreterFrame` opaque struct). [#3500](https://github.com/PyO3/pyo3/pull/3500)
+
+
+## [0.19.2] - 2023-08-01
+
+### Added
+
+- Add FFI definitions `PyState_AddModule`, `PyState_RemoveModule` and `PyState_FindModule` for PyPy 3.9 and up. [#3295](https://github.com/PyO3/pyo3/pull/3295)
+- Add FFI definitions `_PyObject_CallFunction_SizeT` and `_PyObject_CallMethod_SizeT`. [#3297](https://github.com/PyO3/pyo3/pull/3297)
+- Add a "performance" section to the guide collecting performance-related tricks and problems. [#3304](https://github.com/PyO3/pyo3/pull/3304)
+- Add `PyErr::Display` for all Python versions, and FFI symbol `PyErr_DisplayException` for Python 3.12. [#3334](https://github.com/PyO3/pyo3/pull/3334)
+- Add FFI definition `PyType_GetDict()` for Python 3.12. [#3339](https://github.com/PyO3/pyo3/pull/3339)
+- Add `PyAny::downcast_exact`. [#3346](https://github.com/PyO3/pyo3/pull/3346)
+- Add `PySlice::full()` to construct a full slice (`::`). [#3353](https://github.com/PyO3/pyo3/pull/3353)
+
+### Changed
+
+- Update `PyErr` for 3.12 betas to avoid deprecated ffi methods. [#3306](https://github.com/PyO3/pyo3/pull/3306)
+- Update FFI definitions of `object.h` for Python 3.12.0b4. [#3335](https://github.com/PyO3/pyo3/pull/3335)
+- Update `pyo3::ffi` struct definitions to be compatible with 3.12.0b4. [#3342](https://github.com/PyO3/pyo3/pull/3342)
+- Optimize conversion of `float` to `f64` (and `PyFloat::value`) on non-abi3 builds. [#3345](https://github.com/PyO3/pyo3/pull/3345)
+
+### Fixed
+
+- Fix timezone conversion bug for FixedOffset datetimes that were being incorrectly converted to and from UTC. [#3269](https://github.com/PyO3/pyo3/pull/3269)
+- Fix `SystemError` raised in `PyUnicodeDecodeError_Create` on PyPy 3.10. [#3297](https://github.com/PyO3/pyo3/pull/3297)
+- Correct FFI definition `Py_EnterRecursiveCall` to return `c_int` (was incorrectly returning `()`). [#3300](https://github.com/PyO3/pyo3/pull/3300)
+- Fix case where `PyErr::matches` and `PyErr::is_instance` returned results inconsistent with `PyErr::get_type`. [#3313](https://github.com/PyO3/pyo3/pull/3313)
+- Fix loss of panic message in `PanicException` when unwinding after the exception was "normalized". [#3326](https://github.com/PyO3/pyo3/pull/3326)
+- Fix `PyErr::from_value` and `PyErr::into_value` losing traceback on conversion. [#3328](https://github.com/PyO3/pyo3/pull/3328)
+- Fix reference counting of immortal objects on Python 3.12.0b4. [#3335](https://github.com/PyO3/pyo3/pull/3335)
+
+
+## [0.19.1] - 2023-07-03
+
+### Packaging
+
+- Extend range of supported versions of `hashbrown` optional dependency to include version 0.14 [#3258](https://github.com/PyO3/pyo3/pull/3258)
+- Extend range of supported versions of `indexmap` optional dependency to include version 2. [#3277](https://github.com/PyO3/pyo3/pull/3277)
+- Support PyPy 3.10. [#3289](https://github.com/PyO3/pyo3/pull/3289)
+
+### Added
+
+- Add `pyo3::types::PyFrozenSetBuilder` to allow building a `PyFrozenSet` item by item. [#3156](https://github.com/PyO3/pyo3/pull/3156)
+- Add support for converting to and from Python's `ipaddress.IPv4Address`/`ipaddress.IPv6Address` and `std::net::IpAddr`. [#3197](https://github.com/PyO3/pyo3/pull/3197)
+- Add support for `num-bigint` feature in combination with `abi3`. [#3198](https://github.com/PyO3/pyo3/pull/3198)
+- Add `PyErr_GetRaisedException()`, `PyErr_SetRaisedException()` to FFI definitions for Python 3.12 and later. [#3248](https://github.com/PyO3/pyo3/pull/3248)
+- Add `Python::with_pool` which is a safer but more limited alternative to `Python::new_pool`. [#3263](https://github.com/PyO3/pyo3/pull/3263)
+- Add `PyDict::get_item_with_error` on PyPy. [#3270](https://github.com/PyO3/pyo3/pull/3270)
+- Allow `#[new]` methods may to return `Py<Self>` in order to return existing instances. [#3287](https://github.com/PyO3/pyo3/pull/3287)
+
+### Fixed
+
+- Fix conversion of classes implementing `__complex__` to `Complex` when using `abi3` or PyPy. [#3185](https://github.com/PyO3/pyo3/pull/3185)
+- Stop suppressing unrelated exceptions in `PyAny::hasattr`. [#3271](https://github.com/PyO3/pyo3/pull/3271)
+- Fix memory leak when creating `PySet` or `PyFrozenSet` or returning types converted into these internally, e.g. `HashSet` or `BTreeSet`. [#3286](https://github.com/PyO3/pyo3/pull/3286)
+
+
+## [0.19.0] - 2023-05-31
+
+### Packaging
+
+- Correct dependency on syn to version 1.0.85 instead of the incorrect version 1.0.56. [#3152](https://github.com/PyO3/pyo3/pull/3152)
+
+### Added
+
+- Accept `text_signature` option (and automatically generate signature) for `#[new]` in `#[pymethods]`. [#2980](https://github.com/PyO3/pyo3/pull/2980)
+- Add support for converting to and from Python's `decimal.Decimal` and `rust_decimal::Decimal`. [#3016](https://github.com/PyO3/pyo3/pull/3016)
+- Add `#[pyo3(from_item_all)]` when deriving `FromPyObject` to specify `get_item` as getter for all fields. [#3120](https://github.com/PyO3/pyo3/pull/3120)
+- Add `pyo3::exceptions::PyBaseExceptionGroup` for Python 3.11, and corresponding FFI definition `PyExc_BaseExceptionGroup`. [#3141](https://github.com/PyO3/pyo3/pull/3141)
+- Accept `#[new]` with `#[classmethod]` to create a constructor which receives a (subtype's) class/`PyType` as its first argument. [#3157](https://github.com/PyO3/pyo3/pull/3157)
+- Add `PyClass::get` and `Py::get` for GIL-indepedent access to classes with `#[pyclass(frozen)]`. [#3158](https://github.com/PyO3/pyo3/pull/3158)
+- Add `PyAny::is_exact_instance` and `PyAny::is_exact_instance_of`. [#3161](https://github.com/PyO3/pyo3/pull/3161)
+
+### Changed
+
+- `PyAny::is_instance_of::<T>(obj)` is now equivalent to `T::is_type_of(obj)`, and now returns `bool` instead of `PyResult<bool>`. [#2881](https://github.com/PyO3/pyo3/pull/2881)
+- Deprecate `text_signature` option on `#[pyclass]` structs. [#2980](https://github.com/PyO3/pyo3/pull/2980)
+- No longer wrap `anyhow::Error`/`eyre::Report` containing a basic `PyErr` without a chain in a `PyRuntimeError`. [#3004](https://github.com/PyO3/pyo3/pull/3004)
+- - Change `#[getter]` and `#[setter]` to use a common call "trampoline" to slightly reduce generated code size and compile times. [#3029](https://github.com/PyO3/pyo3/pull/3029)
+- Improve default values for str, numbers and bool in automatically-generated `text_signature`. [#3050](https://github.com/PyO3/pyo3/pull/3050)
+- Improve default value for `None` in automatically-generated `text_signature`. [#3066](https://github.com/PyO3/pyo3/pull/3066)
+- Rename `PySequence::list` and `PySequence::tuple` to `PySequence::to_list` and `PySequence::to_tuple`. (The old names continue to exist as deprecated forms.) [#3111](https://github.com/PyO3/pyo3/pull/3111)
+- Extend the lifetime of the GIL token returned by `PyRef::py` and `PyRefMut::py` to match the underlying borrow. [#3131](https://github.com/PyO3/pyo3/pull/3131)
+- Safe access to the GIL, for example via `Python::with_gil`, is now locked inside of implementations of the `__traverse__` slot. [#3168](https://github.com/PyO3/pyo3/pull/3168)
+
+### Removed
+
+- Remove all functionality deprecated in PyO3 0.17, most prominently `Python::acquire_gil` is replaced by `Python::with_gil`. [#2981](https://github.com/PyO3/pyo3/pull/2981)
+
+### Fixed
+
+- Correct FFI definitions `PyGetSetDef`, `PyMemberDef`, `PyStructSequence_Field` and `PyStructSequence_Desc` to have `*const c_char` members for `name` and `doc` (not `*mut c_char`). [#3036](https://github.com/PyO3/pyo3/pull/3036)
+- Fix panic on `fmt::Display`, instead return `"<unprintable object>"` string and report error via `sys.unraisablehook()` [#3062](https://github.com/PyO3/pyo3/pull/3062)
+- Fix a compile error of "temporary value dropped while borrowed" when `#[pyfunction]`s take references into `#[pyclass]`es [#3142](https://github.com/PyO3/pyo3/pull/3142)
+- Fix crashes caused by PyO3 applying deferred reference count updates when entering a `__traverse__` implementation. [#3168](https://github.com/PyO3/pyo3/pull/3168)
+- Forbid running the `Drop` implementations of unsendable classes on other threads. [#3176](https://github.com/PyO3/pyo3/pull/3176)
+- Fix a compile error when `#[pymethods]` items come from somewhere else (for example, as a macro argument) and a custom receiver like `Py<Self>` is used. [#3178](https://github.com/PyO3/pyo3/pull/3178)
+
+
+## [0.18.3] - 2023-04-13
+
+### Added
+
+- Add `GILProtected<T>` to mediate concurrent access to a value using Python's global interpreter lock (GIL). [#2975](https://github.com/PyO3/pyo3/pull/2975)
+- Support `PyASCIIObject` / `PyUnicode` and associated methods on big-endian architectures. [#3015](https://github.com/PyO3/pyo3/pull/3015)
+- Add FFI definition `_PyDict_Contains_KnownHash()` for CPython 3.10 and up. [#3088](https://github.com/PyO3/pyo3/pull/3088)
+
+### Fixed
+
+- Fix compile error for `#[pymethods]` and `#[pyfunction]` called "output". [#3022](https://github.com/PyO3/pyo3/pull/3022)
+- Fix compile error in generated code for magic methods implemented as a `#[staticmethod]`. [#3055](https://github.com/PyO3/pyo3/pull/3055)
+- Fix `is_instance` for `PyDateTime` (would incorrectly check for a `PyDate`). [#3071](https://github.com/PyO3/pyo3/pull/3071)
+- Fix upstream deprecation of `PyUnicode_InternImmortal` since Python 3.10. [#3071](https://github.com/PyO3/pyo3/pull/3087)
+
+
+## [0.18.2] - 2023-03-24
+
+### Packaging
+
+- Disable default features of `chrono` to avoid depending on `time` v0.1.x. [#2939](https://github.com/PyO3/pyo3/pull/2939)
+
+### Added
+
+- Implement `IntoPy<PyObject>`, `ToPyObject` and `FromPyObject` for `Cow<[u8]>` to efficiently handle both `bytes` and `bytearray` objects. [#2899](https://github.com/PyO3/pyo3/pull/2899)
+- Implement `IntoPy<PyObject>`, `ToPyObject` and `FromPyObject` for `Cell<T>`. [#3014](https://github.com/PyO3/pyo3/pull/3014)
+- Add `PyList::to_tuple()`, as a convenient and efficient conversion from lists to tuples. [#3042](https://github.com/PyO3/pyo3/pull/3042)
+- Add `PyTuple::to_list()`, as a convenient and efficient conversion from tuples to lists. [#3044](https://github.com/PyO3/pyo3/pull/3044)
+
+### Changed
+
+- Optimize `PySequence` conversion for `list` and `tuple` inputs. [#2944](https://github.com/PyO3/pyo3/pull/2944)
+- Improve exception raised when creating `#[pyclass]` type object fails during module import. [#2947](https://github.com/PyO3/pyo3/pull/2947)
+- Optimize `PyMapping` conversion for `dict` inputs. [#2954](https://github.com/PyO3/pyo3/pull/2954)
+- Allow `create_exception!` to take a `dotted.module` to place the exception in a submodule. [#2979](https://github.com/PyO3/pyo3/pull/2979)
+
+### Fixed
+
+- Fix a reference counting race condition affecting `PyObject`s cloned in `allow_threads` blocks. [#2952](https://github.com/PyO3/pyo3/pull/2952)
+- Fix `clippy::redundant_closure` lint on default arguments in `#[pyo3(signature = (...))]` annotations. [#2990](https://github.com/PyO3/pyo3/pull/2990)
+- Fix `non_snake_case` lint on generated code in `#[pyfunction]` macro. [#2993](https://github.com/PyO3/pyo3/pull/2993)
+- Fix some FFI definitions for the upcoming PyPy 3.10 release. [#3031](https://github.com/PyO3/pyo3/pull/3031)
+
+
+## [0.18.1] - 2023-02-07
+
+### Added
+
+- Add `PyErr::write_unraisable()`. [#2889](https://github.com/PyO3/pyo3/pull/2889)
+- Add `Python::Ellipsis()` and `PyAny::is_ellipsis()` methods. [#2911](https://github.com/PyO3/pyo3/pull/2911)
+- Add `PyDict::update()` and `PyDict::update_if_missing()` methods. [#2912](https://github.com/PyO3/pyo3/pull/2912)
+
+### Changed
+
+- FFI definition `PyIter_Check` on CPython 3.7 is now implemented as `hasattr(type(obj), "__next__")`, which works correctly on all platforms and adds support for `abi3`. [#2914](https://github.com/PyO3/pyo3/pull/2914)
+- Warn about unknown config keys in `PYO3_CONFIG_FILE` instead of denying. [#2926](https://github.com/PyO3/pyo3/pull/2926)
+
+### Fixed
+
+- Send errors returned by `__releasebuffer__` to `sys.unraisablehook` rather than causing `SystemError`. [#2886](https://github.com/PyO3/pyo3/pull/2886)
+- Fix downcast to `PyIterator` succeeding for Python classes which did not implement `__next__`. [#2914](https://github.com/PyO3/pyo3/pull/2914)
+- Fix segfault in `__traverse__` when visiting `None` fields of `Option<T: AsPyPointer>`. [#2921](https://github.com/PyO3/pyo3/pull/2921)
+- Fix `#[pymethods(crate = "...")]` option being ignored. [#2923](https://github.com/PyO3/pyo3/pull/2923)
+- Link against `pythonXY_d.dll` for debug Python builds on Windows. [#2937](https://github.com/PyO3/pyo3/pull/2937)
+
+
+## [0.18.0] - 2023-01-17
+
+### Packaging
+
+- Relax `indexmap` optional depecency to allow `>= 1.6, < 2`. [#2849](https://github.com/PyO3/pyo3/pull/2849)
+- Relax `hashbrown` optional dependency to allow `>= 0.9, < 0.14`. [#2875](https://github.com/PyO3/pyo3/pull/2875)
+- Update `memoffset` dependency to 0.8. [#2875](https://github.com/PyO3/pyo3/pull/2875)
+
+### Added
+
+- Add `GILOnceCell::get_or_try_init` for fallible `GILOnceCell` initialization. [#2398](https://github.com/PyO3/pyo3/pull/2398)
+- Add experimental feature `experimental-inspect` with `type_input()` and `type_output()` helpers to get the Python type of any Python-compatible object. [#2490](https://github.com/PyO3/pyo3/pull/2490) [#2882](https://github.com/PyO3/pyo3/pull/2882)
+- The `#[pyclass]` macro can now take `get_all` and `set_all` to create getters and setters for every field. [#2692](https://github.com/PyO3/pyo3/pull/2692)
+- Add `#[pyo3(signature = (...))]` option for `#[pyfunction]` and `#[pymethods]`. [#2702](https://github.com/PyO3/pyo3/pull/2702)
+- `pyo3-build-config`: rebuild when `PYO3_ENVIRONMENT_SIGNATURE` environment variable value changes. [#2727](https://github.com/PyO3/pyo3/pull/2727)
+- Add conversions between non-zero int types in `std::num` and Python `int`. [#2730](https://github.com/PyO3/pyo3/pull/2730)
+- Add `Py::downcast()` as a companion to `PyAny::downcast()`, as well as `downcast_unchecked()` for both types. [#2734](https://github.com/PyO3/pyo3/pull/2734)
+- Add types for all built-in `Warning` classes as well as `PyErr::warn_explicit`. [#2742](https://github.com/PyO3/pyo3/pull/2742)
+- Add `abi3-py311` feature. [#2776](https://github.com/PyO3/pyo3/pull/2776)
+- Add FFI definition `_PyErr_ChainExceptions()` for CPython. [#2788](https://github.com/PyO3/pyo3/pull/2788)
+- Add FFI definitions `PyVectorcall_NARGS` and `PY_VECTORCALL_ARGUMENTS_OFFSET` for PyPy 3.8 and up. [#2811](https://github.com/PyO3/pyo3/pull/2811)
+- Add `PyList::get_item_unchecked` for PyPy. [#2827](https://github.com/PyO3/pyo3/pull/2827)
+
+### Changed
+
+- PyO3's macros now emit a much nicer error message if function return values don't implement the required trait(s). [#2664](https://github.com/PyO3/pyo3/pull/2664)
+- Use a TypeError, rather than a ValueError, when refusing to treat a str as a Vec. [#2685](https://github.com/PyO3/pyo3/pull/2685)
+- Change `PyCFunction::new_closure` to take `name` and `doc` arguments. [#2686](https://github.com/PyO3/pyo3/pull/2686)
+- `PyType::is_subclass`, `PyErr::is_instance` and `PyAny::is_instance` now take `&PyAny` instead of `&PyType` arguments, so that they work with objects that pretend to be types using `__subclasscheck__` and `__instancecheck__`. [#2695](https://github.com/PyO3/pyo3/pull/2695)
+- Deprecate `#[args]` attribute and passing "args" specification directly to `#[pyfunction]` in favor of the new `#[pyo3(signature = (...))]` option. [#2702](https://github.com/PyO3/pyo3/pull/2702)
+- Deprecate required arguments after `Option<T>` arguments to `#[pyfunction]` and `#[pymethods]` without also using `#[pyo3(signature)]` to specify whether the arguments should be required or have defaults. [#2703](https://github.com/PyO3/pyo3/pull/2703)
+- Change `#[pyfunction]` and `#[pymethods]` to use a common call "trampoline" to slightly reduce generated code size and compile times. [#2705](https://github.com/PyO3/pyo3/pull/2705)
+- `PyAny::cast_as()` and `Py::cast_as()` are now deprecated in favor of `PyAny::downcast()` and the new `Py::downcast()`. [#2734](https://github.com/PyO3/pyo3/pull/2734)
+- Relax lifetime bounds on `PyAny::downcast()`. [#2734](https://github.com/PyO3/pyo3/pull/2734)
+- Automatically generate `__text_signature__` for all Python functions created using `#[pyfunction]` and `#[pymethods]`. [#2784](https://github.com/PyO3/pyo3/pull/2784)
+- Accept any iterator in `PySet::new` and `PyFrozenSet::new`. [#2795](https://github.com/PyO3/pyo3/pull/2795)
+- Mixing `#[cfg(...)]` and `#[pyo3(...)]` attributes on `#[pyclass]` struct fields will now work. [#2796](https://github.com/PyO3/pyo3/pull/2796)
+- Re-enable `PyFunction` on when building for abi3 or PyPy. [#2838](https://github.com/PyO3/pyo3/pull/2838)
+- Improve `derive(FromPyObject)` to use `intern!` when applicable for `#[pyo3(item)]`. [#2879](https://github.com/PyO3/pyo3/pull/2879)
+
+### Removed
+
+- Remove the deprecated `pyproto` feature, `#[pyproto]` macro, and all accompanying APIs. [#2587](https://github.com/PyO3/pyo3/pull/2587)
+- Remove all functionality deprecated in PyO3 0.16. [#2843](https://github.com/PyO3/pyo3/pull/2843)
+
+### Fixed
+
+- Disable `PyModule::filename` on PyPy. [#2715](https://github.com/PyO3/pyo3/pull/2715)
+- `PyCodeObject` is now once again defined with fields on Python 3.7. [#2726](https://github.com/PyO3/pyo3/pull/2726)
+- Raise a `TypeError` if `#[new]` pymethods with no arguments receive arguments when called from Python. [#2749](https://github.com/PyO3/pyo3/pull/2749)
+- Use the `NOARGS` argument calling convention for methods that have a single `py: Python` argument (as a performance optimization). [#2760](https://github.com/PyO3/pyo3/pull/2760)
+- Fix truncation of `isize` values to `c_long` in `PySlice::new`. [#2769](https://github.com/PyO3/pyo3/pull/2769)
+- Fix soundness issue with FFI definition `PyUnicodeDecodeError_Create` on PyPy leading to indeterminate behavior (typically a `TypeError`). [#2772](https://github.com/PyO3/pyo3/pull/2772)
+- Allow functions taking `**kwargs` to accept keyword arguments which share a name with a positional-only argument (as permitted by PEP 570). [#2800](https://github.com/PyO3/pyo3/pull/2800)
+- Fix unresolved symbol for `PyObject_Vectorcall` on PyPy 3.9 and up. [#2811](https://github.com/PyO3/pyo3/pull/2811)
+- Fix memory leak in `PyCFunction::new_closure`. [#2842](https://github.com/PyO3/pyo3/pull/2842)
+
+
 ## [0.17.3] - 2022-11-01
 
 ### Packaging
@@ -66,6 +382,7 @@ To see unreleased changes, please see the [CHANGELOG on the main branch guide](h
 - Add `PyCode` and `PyFrame` high level objects. [#2408](https://github.com/PyO3/pyo3/pull/2408)
 - Add FFI definitions `Py_fstring_input`, `sendfunc`, and `_PyErr_StackItem`. [#2423](https://github.com/PyO3/pyo3/pull/2423)
 - Add `PyDateTime::new_with_fold`, `PyTime::new_with_fold`, `PyTime::get_fold`, and `PyDateTime::get_fold` for PyPy. [#2428](https://github.com/PyO3/pyo3/pull/2428)
+- Add `#[pyclass(frozen)]`. [#2448](https://github.com/PyO3/pyo3/pull/2448)
 - Accept `#[pyo3(name)]` on enum variants. [#2457](https://github.com/PyO3/pyo3/pull/2457)
 - Add `CompareOp::matches` to implement `__richcmp__` as the result of a Rust `std::cmp::Ordering` comparison. [#2460](https://github.com/PyO3/pyo3/pull/2460)
 - Add `PySuper` type. [#2486](https://github.com/PyO3/pyo3/pull/2486)
@@ -93,7 +410,7 @@ To see unreleased changes, please see the [CHANGELOG on the main branch guide](h
 - Rework `PyCapsule` type to resolve soundness issues: [#2485](https://github.com/PyO3/pyo3/pull/2485)
   - `PyCapsule::new` and `PyCapsule::new_with_destructor` now take `name: Option<CString>` instead of `&CStr`.
   - The destructor `F` in `PyCapsule::new_with_destructor` must now be `Send`.
-  - `PyCapsule::get_context` deprecated in favour of `PyCapsule::context` which doesn't take a `py: Python<'_>` argument.
+  - `PyCapsule::get_context` deprecated in favor of `PyCapsule::context` which doesn't take a `py: Python<'_>` argument.
   - `PyCapsule::set_context` no longer takes a `py: Python<'_>` argument.
   - `PyCapsule::name` now returns `PyResult<Option<&CStr>>` instead of `&CStr`.
 - `FromPyObject::extract` for `Vec<T>` no longer accepts Python `str` inputs. [#2500](https://github.com/PyO3/pyo3/pull/2500)
@@ -138,7 +455,7 @@ To see unreleased changes, please see the [CHANGELOG on the main branch guide](h
 
 ## [0.16.6] - 2022-08-23
 
-### Changed
+### Changed
 
 - Fix soundness issues with `PyCapsule` type with select workarounds. Users are encourage to upgrade to PyO3 0.17 at their earliest convenience which contains API breakages which fix the issues in a long-term fashion. [#2522](https://github.com/PyO3/pyo3/pull/2522)
   - `PyCapsule::new` and `PyCapsule::new_with_destructor` now take ownership of a copy of the `name` to resolve a possible use-after-free.
@@ -204,7 +521,7 @@ To see unreleased changes, please see the [CHANGELOG on the main branch guide](h
 - Allow `#[pyo3(crate = "...", text_signature = "...")]` options to be used directly in `#[pyclass(crate = "...", text_signature = "...")]`. [#2234](https://github.com/PyO3/pyo3/pull/2234)
 - Make `PYO3_CROSS_LIB_DIR` environment variable optional when cross compiling. [#2241](https://github.com/PyO3/pyo3/pull/2241)
 - Mark `METH_FASTCALL` calling convention as limited API on Python 3.10. [#2250](https://github.com/PyO3/pyo3/pull/2250)
-- Deprecate `pyo3_build_config::cross_compiling` in favour of `pyo3_build_config::cross_compiling_from_to`. [#2253](https://github.com/PyO3/pyo3/pull/2253)
+- Deprecate `pyo3_build_config::cross_compiling` in favor of `pyo3_build_config::cross_compiling_from_to`. [#2253](https://github.com/PyO3/pyo3/pull/2253)
 
 ### Fixed
 
@@ -284,7 +601,7 @@ To see unreleased changes, please see the [CHANGELOG on the main branch guide](h
 - Add modulo argument to `__ipow__` magic method. [#2083](https://github.com/PyO3/pyo3/pull/2083)
 - Fix FFI definition for `_PyCFunctionFast`. [#2126](https://github.com/PyO3/pyo3/pull/2126)
 - `PyDateTimeAPI` and `PyDateTime_TimeZone_UTC` are are now unsafe functions instead of statics. [#2126](https://github.com/PyO3/pyo3/pull/2126)
-- `PyDateTimeAPI` does not implicitly call `PyDateTime_IMPORT` anymore to reflect the original Python API more closely. Before the first call to `PyDateTime_IMPORT` a null pointer is returned. Therefore before calling any of the following FFI functions `PyDateTime_IMPORT` must be called to avoid undefined behaviour: [#2126](https://github.com/PyO3/pyo3/pull/2126)
+- `PyDateTimeAPI` does not implicitly call `PyDateTime_IMPORT` anymore to reflect the original Python API more closely. Before the first call to `PyDateTime_IMPORT` a null pointer is returned. Therefore before calling any of the following FFI functions `PyDateTime_IMPORT` must be called to avoid undefined behavior: [#2126](https://github.com/PyO3/pyo3/pull/2126)
   - `PyDateTime_TimeZone_UTC`
   - `PyDate_Check`
   - `PyDate_CheckExact`
@@ -317,7 +634,7 @@ To see unreleased changes, please see the [CHANGELOG on the main branch guide](h
 - Fix the `wrap_pymodule!` macro using the wrong name for a `#[pymodule]` with a `#[pyo3(name = "..")]` attribute. [#2081](https://github.com/PyO3/pyo3/pull/2081)
 - Fix magic methods in `#[pymethods]` accepting implementations with the wrong number of arguments. [#2083](https://github.com/PyO3/pyo3/pull/2083)
 - Fix panic in `#[pyfunction]` generated code when a required argument following an `Option` was not provided.  [#2093](https://github.com/PyO3/pyo3/pull/2093)
-- Fixed undefined behaviour caused by incorrect `ExactSizeIterator` implementations. [#2124](https://github.com/PyO3/pyo3/pull/2124)
+- Fixed undefined behavior caused by incorrect `ExactSizeIterator` implementations. [#2124](https://github.com/PyO3/pyo3/pull/2124)
 - Fix missing FFI definition `PyCMethod_New` on Python 3.9 and up. [#2143](https://github.com/PyO3/pyo3/pull/2143)
 - Add missing FFI definitions `_PyLong_NumBits` and `_PyLong_AsByteArray` on PyPy. [#2146](https://github.com/PyO3/pyo3/pull/2146)
 - Fix memory leak in implementation of `AsPyPointer` for `Option<T>`. [#2160](https://github.com/PyO3/pyo3/pull/2160)
@@ -639,7 +956,7 @@ To see unreleased changes, please see the [CHANGELOG on the main branch guide](h
 
 ### Added
 
-- Add support for building for CPython limited API. Opting-in to the limited API enables a single extension wheel built with PyO3 to be installable on multiple Python versions. This required a few minor changes to runtime behaviour of of PyO3 `#[pyclass]` types. See the migration guide for full details. [#1152](https://github.com/PyO3/pyo3/pull/1152)
+- Add support for building for CPython limited API. Opting-in to the limited API enables a single extension wheel built with PyO3 to be installable on multiple Python versions. This required a few minor changes to runtime behavior of of PyO3 `#[pyclass]` types. See the migration guide for full details. [#1152](https://github.com/PyO3/pyo3/pull/1152)
   - Add feature flags `abi3-py36`, `abi3-py37`, `abi3-py38` etc. to set the minimum Python version when using the limited API. [#1263](https://github.com/PyO3/pyo3/pull/1263)
 - Add argument names to `TypeError` messages generated by pymethod wrappers. [#1212](https://github.com/PyO3/pyo3/pull/1212)
 - Add FFI definitions for PEP 587 "Python Initialization Configuration". [#1247](https://github.com/PyO3/pyo3/pull/1247)
@@ -941,7 +1258,7 @@ To see unreleased changes, please see the [CHANGELOG on the main branch guide](h
 - Usage of raw identifiers with `#[pyo3(set)]`. [#745](https://github.com/PyO3/pyo3/pull/745)
 - Usage of `PyObject` with `#[pyo3(get)]`. [#760](https://github.com/PyO3/pyo3/pull/760)
 - `#[pymethods]` used in conjunction with `#[cfg]`. #[769](https://github.com/PyO3/pyo3/pull/769)
-- `"*"` in a `#[pyfunction()]` argument list incorrectly accepting any number of positional arguments (use `args = "*"` when this behaviour is desired). #[792](https://github.com/PyO3/pyo3/pull/792)
+- `"*"` in a `#[pyfunction()]` argument list incorrectly accepting any number of positional arguments (use `args = "*"` when this behavior is desired). #[792](https://github.com/PyO3/pyo3/pull/792)
 - `PyModule::dict`. #[809](https://github.com/PyO3/pyo3/pull/809)
 - Fix the case where `DESCRIPTION` is not null-terminated. #[822](https://github.com/PyO3/pyo3/pull/822)
 
@@ -1311,7 +1628,17 @@ Yanked
 
 - Initial release
 
-[Unreleased]: https://github.com/pyo3/pyo3/compare/v0.17.3...HEAD
+[Unreleased]: https://github.com/pyo3/pyo3/compare/v0.20.2...HEAD
+[0.20.2]: https://github.com/pyo3/pyo3/compare/v0.20.1...v0.20.2
+[0.20.1]: https://github.com/pyo3/pyo3/compare/v0.20.0...v0.20.1
+[0.20.0]: https://github.com/pyo3/pyo3/compare/v0.19.2...v0.20.0
+[0.19.2]: https://github.com/pyo3/pyo3/compare/v0.19.1...v0.19.2
+[0.19.1]: https://github.com/pyo3/pyo3/compare/v0.19.0...v0.19.1
+[0.19.0]: https://github.com/pyo3/pyo3/compare/v0.18.3...v0.19.0
+[0.18.3]: https://github.com/pyo3/pyo3/compare/v0.18.2...v0.18.3
+[0.18.2]: https://github.com/pyo3/pyo3/compare/v0.18.1...v0.18.2
+[0.18.1]: https://github.com/pyo3/pyo3/compare/v0.18.0...v0.18.1
+[0.18.0]: https://github.com/pyo3/pyo3/compare/v0.17.3...v0.18.0
 [0.17.3]: https://github.com/pyo3/pyo3/compare/v0.17.2...v0.17.3
 [0.17.2]: https://github.com/pyo3/pyo3/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/pyo3/pyo3/compare/v0.17.0...v0.17.1
