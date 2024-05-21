@@ -1,7 +1,7 @@
 use crate::class::basic::CompareOp;
-use crate::conversion::{AsPyPointer, FromPyObject, IntoPy, IntoPyPointer, PyTryFrom, ToPyObject};
+use crate::conversion::{AsPyPointer, FromPyObject, IntoPy, PyTryFrom, ToPyObject};
 use crate::err::{PyDowncastError, PyErr, PyResult};
-use crate::exceptions::PyTypeError;
+use crate::exceptions::{PyAttributeError, PyTypeError};
 use crate::type_object::PyTypeInfo;
 #[cfg(not(PyPy))]
 use crate::types::PySuper;
@@ -36,7 +36,7 @@ use std::os::raw::c_int;
 #[repr(transparent)]
 pub struct PyAny(UnsafeCell<ffi::PyObject>);
 
-impl crate::AsPyPointer for PyAny {
+unsafe impl AsPyPointer for PyAny {
     #[inline]
     fn as_ptr(&self) -> *mut ffi::PyObject {
         self.0.get()
@@ -54,7 +54,7 @@ pyobject_native_type_base!(PyAny);
 
 pyobject_native_type_info!(
     PyAny,
-    ffi::PyBaseObject_Type,
+    pyobject_native_static_type_object!(ffi::PyBaseObject_Type),
     Some("builtins"),
     #checkfunction=PyObject_Check
 );
@@ -64,29 +64,6 @@ pyobject_native_type_extract!(PyAny);
 pyobject_native_type_sized!(PyAny, ffi::PyObject);
 
 impl PyAny {
-    /// Converts this `PyAny` to a concrete Python type.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use pyo3::prelude::*;
-    /// use pyo3::types::{PyAny, PyDict, PyList};
-    ///
-    /// Python::with_gil(|py| {
-    ///     let dict = PyDict::new(py);
-    ///     assert!(dict.is_instance_of::<PyAny>().unwrap());
-    ///     let any: &PyAny = dict.as_ref();
-    ///     assert!(any.downcast::<PyDict>().is_ok());
-    ///     assert!(any.downcast::<PyList>().is_err());
-    /// });
-    /// ```
-    pub fn downcast<T>(&self) -> Result<&T, PyDowncastError<'_>>
-    where
-        for<'py> T: PyTryFrom<'py>,
-    {
-        <T as PyTryFrom>::try_from(self)
-    }
-
     /// Returns whether `self` and `other` point to the same object. To compare
     /// the equality of two objects (the `==` operator), use [`eq`](PyAny::eq).
     ///
@@ -102,14 +79,37 @@ impl PyAny {
     ///
     /// To avoid repeated temporary allocations of Python strings, the [`intern!`] macro can be used
     /// to intern `attr_name`.
+    ///
+    /// # Example: `intern!`ing the attribute name
+    ///
+    /// ```
+    /// # use pyo3::{intern, pyfunction, types::PyModule, Python, PyResult};
+    /// #
+    /// #[pyfunction]
+    /// fn has_version(sys: &PyModule) -> PyResult<bool> {
+    ///     sys.hasattr(intern!(sys.py(), "version"))
+    /// }
+    /// #
+    /// # Python::with_gil(|py| {
+    /// #    let sys = py.import("sys").unwrap();
+    /// #    has_version(sys).unwrap();
+    /// # });
+    /// ```
     pub fn hasattr<N>(&self, attr_name: N) -> PyResult<bool>
     where
         N: IntoPy<Py<PyString>>,
     {
-        let py = self.py();
-        let attr_name = attr_name.into_py(py);
+        fn inner(any: &PyAny, attr_name: Py<PyString>) -> PyResult<bool> {
+            // PyObject_HasAttr suppresses all exceptions, which was the behaviour of `hasattr` in Python 2.
+            // Use an implementation which suppresses only AttributeError, which is consistent with `hasattr` in Python 3.
+            match any._getattr(attr_name) {
+                Ok(_) => Ok(true),
+                Err(err) if err.is_instance_of::<PyAttributeError>(any.py()) => Ok(false),
+                Err(e) => Err(e),
+            }
+        }
 
-        unsafe { Ok(ffi::PyObject_HasAttr(self.as_ptr(), attr_name.as_ptr()) != 0) }
+        inner(self, attr_name.into_py(self.py()))
     }
 
     /// Retrieves an attribute value.
@@ -138,12 +138,65 @@ impl PyAny {
     where
         N: IntoPy<Py<PyString>>,
     {
-        let py = self.py();
-        let attr_name = attr_name.into_py(py);
+        fn inner(any: &PyAny, attr_name: Py<PyString>) -> PyResult<&PyAny> {
+            any._getattr(attr_name)
+                .map(|object| object.into_ref(any.py()))
+        }
 
+        inner(self, attr_name.into_py(self.py()))
+    }
+
+    fn _getattr(&self, attr_name: Py<PyString>) -> PyResult<PyObject> {
         unsafe {
-            let ret = ffi::PyObject_GetAttr(self.as_ptr(), attr_name.as_ptr());
-            py.from_owned_ptr_or_err(ret)
+            Py::from_owned_ptr_or_err(
+                self.py(),
+                ffi::PyObject_GetAttr(self.as_ptr(), attr_name.as_ptr()),
+            )
+        }
+    }
+
+    /// Retrieve an attribute value, skipping the instance dictionary during the lookup but still
+    /// binding the object to the instance.
+    ///
+    /// This is useful when trying to resolve Python's "magic" methods like `__getitem__`, which
+    /// are looked up starting from the type object.  This returns an `Option` as it is not
+    /// typically a direct error for the special lookup to fail, as magic methods are optional in
+    /// many situations in which they might be called.
+    ///
+    /// To avoid repeated temporary allocations of Python strings, the [`intern!`] macro can be used
+    /// to intern `attr_name`.
+    #[allow(dead_code)] // Currently only used with num-complex+abi3, so dead without that.
+    pub(crate) fn lookup_special<N>(&self, attr_name: N) -> PyResult<Option<&PyAny>>
+    where
+        N: IntoPy<Py<PyString>>,
+    {
+        let py = self.py();
+        let self_type = self.get_type();
+        let attr = if let Ok(attr) = self_type.getattr(attr_name) {
+            attr
+        } else {
+            return Ok(None);
+        };
+
+        // Manually resolve descriptor protocol.
+        if cfg!(Py_3_10)
+            || unsafe { ffi::PyType_HasFeature(attr.get_type_ptr(), ffi::Py_TPFLAGS_HEAPTYPE) } != 0
+        {
+            // This is the preferred faster path, but does not work on static types (generally,
+            // types defined in extension modules) before Python 3.10.
+            unsafe {
+                let descr_get_ptr = ffi::PyType_GetSlot(attr.get_type_ptr(), ffi::Py_tp_descr_get);
+                if descr_get_ptr.is_null() {
+                    return Ok(Some(attr));
+                }
+                let descr_get: ffi::descrgetfunc = std::mem::transmute(descr_get_ptr);
+                let ret = descr_get(attr.as_ptr(), self.as_ptr(), self_type.as_ptr());
+                py.from_owned_ptr_or_err(ret).map(Some)
+            }
+        } else if let Ok(descr_get) = attr.get_type().getattr(crate::intern!(py, "__get__")) {
+            descr_get.call1((attr, self, self_type)).map(Some)
+        } else {
+            Ok(Some(attr))
         }
     }
 
@@ -174,14 +227,14 @@ impl PyAny {
         N: IntoPy<Py<PyString>>,
         V: ToPyObject,
     {
-        let py = self.py();
-        let attr_name = attr_name.into_py(py);
-        let value = value.to_object(py);
-
-        unsafe {
-            let ret = ffi::PyObject_SetAttr(self.as_ptr(), attr_name.as_ptr(), value.as_ptr());
-            err::error_on_minusone(py, ret)
+        fn inner(any: &PyAny, attr_name: Py<PyString>, value: PyObject) -> PyResult<()> {
+            err::error_on_minusone(any.py(), unsafe {
+                ffi::PyObject_SetAttr(any.as_ptr(), attr_name.as_ptr(), value.as_ptr())
+            })
         }
+
+        let py = self.py();
+        inner(self, attr_name.into_py(py), value.to_object(py))
     }
 
     /// Deletes an attribute.
@@ -194,13 +247,13 @@ impl PyAny {
     where
         N: IntoPy<Py<PyString>>,
     {
-        let py = self.py();
-        let attr_name = attr_name.into_py(py);
-
-        unsafe {
-            let ret = ffi::PyObject_DelAttr(self.as_ptr(), attr_name.as_ptr());
-            err::error_on_minusone(py, ret)
+        fn inner(any: &PyAny, attr_name: Py<PyString>) -> PyResult<()> {
+            err::error_on_minusone(any.py(), unsafe {
+                ffi::PyObject_DelAttr(any.as_ptr(), attr_name.as_ptr())
+            })
         }
+
+        inner(self, attr_name.into_py(self.py()))
     }
 
     /// Returns an [`Ordering`] between `self` and `other`.
@@ -316,13 +369,17 @@ impl PyAny {
     where
         O: ToPyObject,
     {
-        unsafe {
-            self.py().from_owned_ptr_or_err(ffi::PyObject_RichCompare(
-                self.as_ptr(),
-                other.to_object(self.py()).as_ptr(),
-                compare_op as c_int,
-            ))
+        fn inner(slf: &PyAny, other: PyObject, compare_op: CompareOp) -> PyResult<&PyAny> {
+            unsafe {
+                slf.py().from_owned_ptr_or_err(ffi::PyObject_RichCompare(
+                    slf.as_ptr(),
+                    other.as_ptr(),
+                    compare_op as c_int,
+                ))
+            }
         }
+
+        inner(self, other.to_object(self.py()), compare_op)
     }
 
     /// Tests whether this object is less than another.
@@ -454,12 +511,11 @@ impl PyAny {
         let py = self.py();
 
         let args = args.into_py(py);
-        let kwargs = kwargs.into_ptr();
+        let kwargs = kwargs.map_or(std::ptr::null_mut(), |kwargs| kwargs.as_ptr());
 
         unsafe {
             let return_value = ffi::PyObject_Call(self.as_ptr(), args.as_ptr(), kwargs);
             let ret = py.from_owned_ptr_or_err(return_value);
-            ffi::Py_XDECREF(kwargs);
             ret
         }
     }
@@ -575,12 +631,11 @@ impl PyAny {
 
         let callee = self.getattr(name)?;
         let args: Py<PyTuple> = args.into_py(py);
-        let kwargs = kwargs.into_ptr();
+        let kwargs = kwargs.map_or(std::ptr::null_mut(), |kwargs| kwargs.as_ptr());
 
         unsafe {
             let result_ptr = ffi::PyObject_Call(callee.as_ptr(), args.as_ptr(), kwargs);
             let result = py.from_owned_ptr_or_err(result_ptr);
-            ffi::Py_XDECREF(kwargs);
             result
         }
     }
@@ -688,8 +743,16 @@ impl PyAny {
     /// Returns whether the object is considered to be None.
     ///
     /// This is equivalent to the Python expression `self is None`.
+    #[inline]
     pub fn is_none(&self) -> bool {
         unsafe { ffi::Py_None() == self.as_ptr() }
+    }
+
+    /// Returns whether the object is Ellipsis, e.g. `...`.
+    ///
+    /// This is equivalent to the Python expression `self is ...`.
+    pub fn is_ellipsis(&self) -> bool {
+        unsafe { ffi::Py_Ellipsis() == self.as_ptr() }
     }
 
     /// Returns true if the sequence or mapping has a length of 0.
@@ -706,12 +769,14 @@ impl PyAny {
     where
         K: ToPyObject,
     {
-        unsafe {
-            self.py().from_owned_ptr_or_err(ffi::PyObject_GetItem(
-                self.as_ptr(),
-                key.to_object(self.py()).as_ptr(),
-            ))
+        fn inner(slf: &PyAny, key: PyObject) -> PyResult<&PyAny> {
+            unsafe {
+                slf.py()
+                    .from_owned_ptr_or_err(ffi::PyObject_GetItem(slf.as_ptr(), key.as_ptr()))
+            }
         }
+
+        inner(self, key.to_object(self.py()))
     }
 
     /// Sets a collection item value.
@@ -722,17 +787,14 @@ impl PyAny {
         K: ToPyObject,
         V: ToPyObject,
     {
-        let py = self.py();
-        unsafe {
-            err::error_on_minusone(
-                py,
-                ffi::PyObject_SetItem(
-                    self.as_ptr(),
-                    key.to_object(py).as_ptr(),
-                    value.to_object(py).as_ptr(),
-                ),
-            )
+        fn inner(slf: &PyAny, key: PyObject, value: PyObject) -> PyResult<()> {
+            err::error_on_minusone(slf.py(), unsafe {
+                ffi::PyObject_SetItem(slf.as_ptr(), key.as_ptr(), value.as_ptr())
+            })
         }
+
+        let py = self.py();
+        inner(self, key.to_object(py), value.to_object(py))
     }
 
     /// Deletes an item from the collection.
@@ -742,12 +804,13 @@ impl PyAny {
     where
         K: ToPyObject,
     {
-        unsafe {
-            err::error_on_minusone(
-                self.py(),
-                ffi::PyObject_DelItem(self.as_ptr(), key.to_object(self.py()).as_ptr()),
-            )
+        fn inner(slf: &PyAny, key: PyObject) -> PyResult<()> {
+            err::error_on_minusone(slf.py(), unsafe {
+                ffi::PyObject_DelItem(slf.as_ptr(), key.as_ptr())
+            })
         }
+
+        inner(self, key.to_object(self.py()))
     }
 
     /// Takes an object and returns an iterator for it.
@@ -755,7 +818,7 @@ impl PyAny {
     /// This is typically a new iterator but if the argument is an iterator,
     /// this returns itself.
     pub fn iter(&self) -> PyResult<&PyIterator> {
-        PyIterator::from_object(self.py(), self)
+        PyIterator::from_object(self)
     }
 
     /// Returns the Python type object for this object's type.
@@ -769,14 +832,115 @@ impl PyAny {
         unsafe { ffi::Py_TYPE(self.as_ptr()) }
     }
 
-    /// Casts `self` to a concrete Python object type.
+    /// Downcast this `PyAny` to a concrete Python type or pyclass.
     ///
-    /// This can cast only to native Python types, not types implemented in Rust.
-    pub fn cast_as<'a, D>(&'a self) -> Result<&'a D, PyDowncastError<'_>>
+    /// Note that you can often avoid downcasting yourself by just specifying
+    /// the desired type in function or method signatures.
+    /// However, manual downcasting is sometimes necessary.
+    ///
+    /// For extracting a Rust-only type, see [`PyAny::extract`](struct.PyAny.html#method.extract).
+    ///
+    /// # Example: Downcasting to a specific Python object
+    ///
+    /// ```rust
+    /// use pyo3::prelude::*;
+    /// use pyo3::types::{PyDict, PyList};
+    ///
+    /// Python::with_gil(|py| {
+    ///     let dict = PyDict::new(py);
+    ///     assert!(dict.is_instance_of::<PyAny>());
+    ///     let any: &PyAny = dict.as_ref();
+    ///
+    ///     assert!(any.downcast::<PyDict>().is_ok());
+    ///     assert!(any.downcast::<PyList>().is_err());
+    /// });
+    /// ```
+    ///
+    /// # Example: Getting a reference to a pyclass
+    ///
+    /// This is useful if you want to mutate a `PyObject` that
+    /// might actually be a pyclass.
+    ///
+    /// ```rust
+    /// # fn main() -> Result<(), pyo3::PyErr> {
+    /// use pyo3::prelude::*;
+    ///
+    /// #[pyclass]
+    /// struct Class {
+    ///     i: i32,
+    /// }
+    ///
+    /// Python::with_gil(|py| {
+    ///     let class: &PyAny = Py::new(py, Class { i: 0 }).unwrap().into_ref(py);
+    ///
+    ///     let class_cell: &PyCell<Class> = class.downcast()?;
+    ///
+    ///     class_cell.borrow_mut().i += 1;
+    ///
+    ///     // Alternatively you can get a `PyRefMut` directly
+    ///     let class_ref: PyRefMut<'_, Class> = class.extract()?;
+    ///     assert_eq!(class_ref.i, 1);
+    ///     Ok(())
+    /// })
+    /// # }
+    /// ```
+    #[inline]
+    pub fn downcast<'p, T>(&'p self) -> Result<&'p T, PyDowncastError<'_>>
     where
-        D: PyTryFrom<'a>,
+        T: PyTryFrom<'p>,
     {
-        <D as PyTryFrom<'_>>::try_from(self)
+        <T as PyTryFrom>::try_from(self)
+    }
+
+    /// Downcast this `PyAny` to a concrete Python type or pyclass (but not a subclass of it).
+    ///
+    /// It is almost always better to use [`PyAny::downcast`] because it accounts for Python
+    /// subtyping. Use this method only when you do not want to allow subtypes.
+    ///
+    /// The advantage of this method over [`PyAny::downcast`] is that it is faster. The implementation
+    /// of `downcast_exact` uses the equivalent of the Python expression `type(self) is T`, whereas
+    /// `downcast` uses `isinstance(self, T)`.
+    ///
+    /// For extracting a Rust-only type, see [`PyAny::extract`](struct.PyAny.html#method.extract).
+    ///
+    /// # Example: Downcasting to a specific Python object but not a subtype
+    ///
+    /// ```rust
+    /// use pyo3::prelude::*;
+    /// use pyo3::types::{PyBool, PyLong};
+    ///
+    /// Python::with_gil(|py| {
+    ///     let b = PyBool::new(py, true);
+    ///     assert!(b.is_instance_of::<PyBool>());
+    ///     let any: &PyAny = b.as_ref();
+    ///
+    ///     // `bool` is a subtype of `int`, so `downcast` will accept a `bool` as an `int`
+    ///     // but `downcast_exact` will not.
+    ///     assert!(any.downcast::<PyLong>().is_ok());
+    ///     assert!(any.downcast_exact::<PyLong>().is_err());
+    ///
+    ///     assert!(any.downcast_exact::<PyBool>().is_ok());
+    /// });
+    /// ```
+    #[inline]
+    pub fn downcast_exact<'p, T>(&'p self) -> Result<&'p T, PyDowncastError<'_>>
+    where
+        T: PyTryFrom<'p>,
+    {
+        <T as PyTryFrom>::try_from_exact(self)
+    }
+
+    /// Converts this `PyAny` to a concrete Python type without checking validity.
+    ///
+    /// # Safety
+    ///
+    /// Callers must ensure that the type is valid or risk type confusion.
+    #[inline]
+    pub unsafe fn downcast_unchecked<'p, T>(&'p self) -> &'p T
+    where
+        T: PyTryFrom<'p>,
+    {
+        <T as PyTryFrom>::try_from_unchecked(self)
     }
 
     /// Extracts some type from the Python object.
@@ -819,11 +983,8 @@ impl PyAny {
     /// This is equivalent to the Python expression `hash(self)`.
     pub fn hash(&self) -> PyResult<isize> {
         let v = unsafe { ffi::PyObject_Hash(self.as_ptr()) };
-        if v == -1 {
-            Err(PyErr::fetch(self.py()))
-        } else {
-            Ok(v)
-        }
+        crate::err::error_on_minusone(self.py(), v)?;
+        Ok(v)
     }
 
     /// Returns the length of the sequence or mapping.
@@ -831,11 +992,8 @@ impl PyAny {
     /// This is equivalent to the Python expression `len(self)`.
     pub fn len(&self) -> PyResult<usize> {
         let v = unsafe { ffi::PyObject_Size(self.as_ptr()) };
-        if v == -1 {
-            Err(PyErr::fetch(self.py()))
-        } else {
-            Ok(v as usize)
-        }
+        crate::err::error_on_minusone(self.py(), v)?;
+        Ok(v as usize)
     }
 
     /// Returns the list of attributes of this object.
@@ -848,18 +1006,37 @@ impl PyAny {
     /// Checks whether this object is an instance of type `ty`.
     ///
     /// This is equivalent to the Python expression `isinstance(self, ty)`.
-    pub fn is_instance(&self, ty: &PyType) -> PyResult<bool> {
+    #[inline]
+    pub fn is_instance(&self, ty: &PyAny) -> PyResult<bool> {
         let result = unsafe { ffi::PyObject_IsInstance(self.as_ptr(), ty.as_ptr()) };
         err::error_on_minusone(self.py(), result)?;
         Ok(result == 1)
+    }
+
+    /// Checks whether this object is an instance of exactly type `ty` (not a subclass).
+    ///
+    /// This is equivalent to the Python expression `type(self) is ty`.
+    #[inline]
+    pub fn is_exact_instance(&self, ty: &PyAny) -> bool {
+        self.get_type().is(ty)
     }
 
     /// Checks whether this object is an instance of type `T`.
     ///
     /// This is equivalent to the Python expression `isinstance(self, T)`,
     /// if the type `T` is known at compile time.
-    pub fn is_instance_of<T: PyTypeInfo>(&self) -> PyResult<bool> {
-        self.is_instance(T::type_object(self.py()))
+    #[inline]
+    pub fn is_instance_of<T: PyTypeInfo>(&self) -> bool {
+        T::is_type_of(self)
+    }
+
+    /// Checks whether this object is an instance of exactly type `T`.
+    ///
+    /// This is equivalent to the Python expression `type(self) is T`,
+    /// if the type `T` is known at compile time.
+    #[inline]
+    pub fn is_exact_instance_of<T: PyTypeInfo>(&self) -> bool {
+        T::is_exact_type_of(self)
     }
 
     /// Determines if self contains `value`.
@@ -886,6 +1063,31 @@ impl PyAny {
         PyNativeType::py(self)
     }
 
+    /// Returns the raw FFI pointer represented by self.
+    ///
+    /// # Safety
+    ///
+    /// Callers are responsible for ensuring that the pointer does not outlive self.
+    ///
+    /// The reference is borrowed; callers should not decrease the reference count
+    /// when they are finished with the pointer.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut ffi::PyObject {
+        self as *const PyAny as *mut ffi::PyObject
+    }
+
+    /// Returns an owned raw FFI pointer represented by self.
+    ///
+    /// # Safety
+    ///
+    /// The reference is owned; when finished the caller should either transfer ownership
+    /// of the pointer or decrease the reference count (e.g. with [`pyo3::ffi::Py_DecRef`](crate::ffi::Py_DecRef)).
+    #[inline]
+    pub fn into_ptr(&self) -> *mut ffi::PyObject {
+        // Safety: self.as_ptr() returns a valid non-null pointer
+        unsafe { ffi::_Py_NewRef(self.as_ptr()) }
+    }
+
     /// Return a proxy object that delegates method calls to a parent or sibling class of type.
     ///
     /// This is equivalent to the Python expression `super()`
@@ -898,10 +1100,82 @@ impl PyAny {
 #[cfg(test)]
 mod tests {
     use crate::{
-        type_object::PyTypeInfo,
-        types::{IntoPyDict, PyList, PyLong, PyModule},
+        types::{IntoPyDict, PyAny, PyBool, PyList, PyLong, PyModule},
         Python, ToPyObject,
     };
+
+    #[test]
+    fn test_lookup_special() {
+        Python::with_gil(|py| {
+            let module = PyModule::from_code(
+                py,
+                r#"
+class CustomCallable:
+    def __call__(self):
+        return 1
+
+class SimpleInt:
+    def __int__(self):
+        return 1
+
+class InheritedInt(SimpleInt): pass
+
+class NoInt: pass
+
+class NoDescriptorInt:
+    __int__ = CustomCallable()
+
+class InstanceOverrideInt:
+    def __int__(self):
+        return 1
+instance_override = InstanceOverrideInt()
+instance_override.__int__ = lambda self: 2
+
+class ErrorInDescriptorInt:
+    @property
+    def __int__(self):
+        raise ValueError("uh-oh!")
+
+class NonHeapNonDescriptorInt:
+    # A static-typed callable that doesn't implement `__get__`.  These are pretty hard to come by.
+    __int__ = int
+                "#,
+                "test.py",
+                "test",
+            )
+            .unwrap();
+
+            let int = crate::intern!(py, "__int__");
+            let eval_int =
+                |obj: &PyAny| obj.lookup_special(int)?.unwrap().call0()?.extract::<u32>();
+
+            let simple = module.getattr("SimpleInt").unwrap().call0().unwrap();
+            assert_eq!(eval_int(simple).unwrap(), 1);
+            let inherited = module.getattr("InheritedInt").unwrap().call0().unwrap();
+            assert_eq!(eval_int(inherited).unwrap(), 1);
+            let no_descriptor = module.getattr("NoDescriptorInt").unwrap().call0().unwrap();
+            assert_eq!(eval_int(no_descriptor).unwrap(), 1);
+            let missing = module.getattr("NoInt").unwrap().call0().unwrap();
+            assert!(missing.lookup_special(int).unwrap().is_none());
+            // Note the instance override should _not_ call the instance method that returns 2,
+            // because that's not how special lookups are meant to work.
+            let instance_override = module.getattr("instance_override").unwrap();
+            assert_eq!(eval_int(instance_override).unwrap(), 1);
+            let descriptor_error = module
+                .getattr("ErrorInDescriptorInt")
+                .unwrap()
+                .call0()
+                .unwrap();
+            assert!(descriptor_error.lookup_special(int).is_err());
+            let nonheap_nondescriptor = module
+                .getattr("NonHeapNonDescriptorInt")
+                .unwrap()
+                .call0()
+                .unwrap();
+            assert_eq!(eval_int(nonheap_nondescriptor).unwrap(), 0);
+        })
+    }
+
     #[test]
     fn test_call_for_non_existing_method() {
         Python::with_gil(|py| {
@@ -977,6 +1251,44 @@ class SimpleClass:
     }
 
     #[test]
+    fn test_hasattr() {
+        Python::with_gil(|py| {
+            let x = 5.to_object(py).into_ref(py);
+            assert!(x.is_instance_of::<PyLong>());
+
+            assert!(x.hasattr("to_bytes").unwrap());
+            assert!(!x.hasattr("bbbbbbytes").unwrap());
+        })
+    }
+
+    #[cfg(feature = "macros")]
+    #[test]
+    fn test_hasattr_error() {
+        use crate::exceptions::PyValueError;
+        use crate::prelude::*;
+
+        #[pyclass(crate = "crate")]
+        struct GetattrFail;
+
+        #[pymethods(crate = "crate")]
+        impl GetattrFail {
+            fn __getattr__(&self, attr: PyObject) -> PyResult<PyObject> {
+                Err(PyValueError::new_err(attr))
+            }
+        }
+
+        Python::with_gil(|py| {
+            let obj = Py::new(py, GetattrFail).unwrap();
+            let obj = obj.as_ref(py).as_ref();
+
+            assert!(obj
+                .hasattr("foo")
+                .unwrap_err()
+                .is_instance_of::<PyValueError>(py));
+        })
+    }
+
+    #[test]
     fn test_nan_eq() {
         Python::with_gil(|py| {
             let nan = py.eval("float('nan')", None, None).unwrap();
@@ -985,21 +1297,47 @@ class SimpleClass:
     }
 
     #[test]
-    fn test_any_isinstance() {
+    fn test_any_is_instance_of() {
         Python::with_gil(|py| {
             let x = 5.to_object(py).into_ref(py);
-            assert!(x.is_instance_of::<PyLong>().unwrap());
+            assert!(x.is_instance_of::<PyLong>());
 
             let l = vec![x, x].to_object(py).into_ref(py);
-            assert!(l.is_instance_of::<PyList>().unwrap());
+            assert!(l.is_instance_of::<PyList>());
         });
     }
 
     #[test]
-    fn test_any_isinstance_of() {
+    fn test_any_is_instance() {
         Python::with_gil(|py| {
             let l = vec![1u8, 2].to_object(py).into_ref(py);
-            assert!(l.is_instance(PyList::type_object(py)).unwrap());
+            assert!(l.is_instance(py.get_type::<PyList>()).unwrap());
+        });
+    }
+
+    #[test]
+    fn test_any_is_exact_instance_of() {
+        Python::with_gil(|py| {
+            let x = 5.to_object(py).into_ref(py);
+            assert!(x.is_exact_instance_of::<PyLong>());
+
+            let t = PyBool::new(py, true);
+            assert!(t.is_instance_of::<PyLong>());
+            assert!(!t.is_exact_instance_of::<PyLong>());
+            assert!(t.is_exact_instance_of::<PyBool>());
+
+            let l = vec![x, x].to_object(py).into_ref(py);
+            assert!(l.is_exact_instance_of::<PyList>());
+        });
+    }
+
+    #[test]
+    fn test_any_is_exact_instance() {
+        Python::with_gil(|py| {
+            let t = PyBool::new(py, true);
+            assert!(t.is_instance(py.get_type::<PyLong>()).unwrap());
+            assert!(!t.is_exact_instance(py.get_type::<PyLong>()));
+            assert!(t.is_exact_instance(py.get_type::<PyBool>()));
         });
     }
 
@@ -1120,5 +1458,20 @@ class SimpleClass:
     fn test_eq_methods_bools() {
         let bools = [true, false];
         test_eq_methods_generic(&bools);
+    }
+
+    #[test]
+    fn test_is_ellipsis() {
+        Python::with_gil(|py| {
+            let v = py
+                .eval("...", None, None)
+                .map_err(|e| e.display(py))
+                .unwrap();
+
+            assert!(v.is_ellipsis());
+
+            let not_ellipsis = 5.to_object(py).into_ref(py);
+            assert!(!not_ellipsis.is_ellipsis());
+        });
     }
 }

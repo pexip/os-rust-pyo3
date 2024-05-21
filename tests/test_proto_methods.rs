@@ -5,6 +5,7 @@ use pyo3::types::{PyDict, PyList, PyMapping, PySequence, PySlice, PyType};
 use pyo3::{prelude::*, py_run, PyCell};
 use std::{isize, iter};
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
 #[pyclass]
@@ -14,14 +15,14 @@ struct EmptyClass;
 struct ExampleClass {
     #[pyo3(get, set)]
     value: i32,
-    _custom_attr: Option<i32>,
+    custom_attr: Option<i32>,
 }
 
 #[pymethods]
 impl ExampleClass {
     fn __getattr__(&self, py: Python<'_>, attr: &str) -> PyResult<PyObject> {
         if attr == "special_custom_attr" {
-            Ok(self._custom_attr.into_py(py))
+            Ok(self.custom_attr.into_py(py))
         } else {
             Err(PyAttributeError::new_err(attr.to_string()))
         }
@@ -29,7 +30,7 @@ impl ExampleClass {
 
     fn __setattr__(&mut self, attr: &str, value: &PyAny) -> PyResult<()> {
         if attr == "special_custom_attr" {
-            self._custom_attr = Some(value.extract()?);
+            self.custom_attr = Some(value.extract()?);
             Ok(())
         } else {
             Err(PyAttributeError::new_err(attr.to_string()))
@@ -38,7 +39,7 @@ impl ExampleClass {
 
     fn __delattr__(&mut self, attr: &str) -> PyResult<()> {
         if attr == "special_custom_attr" {
-            self._custom_attr = None;
+            self.custom_attr = None;
             Ok(())
         } else {
             Err(PyAttributeError::new_err(attr.to_string()))
@@ -68,7 +69,7 @@ fn make_example(py: Python<'_>) -> &PyCell<ExampleClass> {
         py,
         ExampleClass {
             value: 5,
-            _custom_attr: Some(20),
+            custom_attr: Some(20),
         },
     )
     .unwrap()
@@ -529,7 +530,7 @@ struct GetItem {}
 #[pymethods]
 impl GetItem {
     fn __getitem__(&self, idx: &PyAny) -> PyResult<&'static str> {
-        if let Ok(slice) = idx.cast_as::<PySlice>() {
+        if let Ok(slice) = idx.downcast::<PySlice>() {
             let indices = slice.indices(1000)?;
             if indices.start == 100 && indices.stop == 200 && indices.step == 1 {
                 return Ok("slice");
@@ -689,7 +690,7 @@ asyncio.run(main())
         let globals = PyModule::import(py, "__main__").unwrap().dict();
         globals.set_item("Once", once).unwrap();
         py.run(source, Some(globals), None)
-            .map_err(|e| e.print(py))
+            .map_err(|e| e.display(py))
             .unwrap();
     });
 }
@@ -746,7 +747,7 @@ asyncio.run(main())
             .set_item("AsyncIterator", py.get_type::<AsyncIterator>())
             .unwrap();
         py.run(source, Some(globals), None)
-            .map_err(|e| e.print(py))
+            .map_err(|e| e.display(py))
             .unwrap();
     });
 }
@@ -815,7 +816,7 @@ assert c.counter.count == 1
         let globals = PyModule::import(py, "__main__").unwrap().dict();
         globals.set_item("Counter", counter).unwrap();
         py.run(source, Some(globals), None)
-            .map_err(|e| e.print(py))
+            .map_err(|e| e.display(py))
             .unwrap();
     });
 }
@@ -849,7 +850,7 @@ struct DefaultedContains;
 #[pymethods]
 impl DefaultedContains {
     fn __iter__(&self, py: Python<'_>) -> PyObject {
-        PyList::new(py, &["a", "b", "c"])
+        PyList::new(py, ["a", "b", "c"])
             .as_ref()
             .iter()
             .unwrap()
@@ -863,7 +864,7 @@ struct NoContains;
 #[pymethods]
 impl NoContains {
     fn __iter__(&self, py: Python<'_>) -> PyObject {
-        PyList::new(py, &["a", "b", "c"])
+        PyList::new(py, ["a", "b", "c"])
             .as_ref()
             .iter()
             .unwrap()

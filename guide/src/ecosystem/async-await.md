@@ -131,7 +131,6 @@ fn my_async_module(py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
     Ok(())
 }
-
 ```
 
 If you want to use `tokio` instead, here's what your module should look like:
@@ -540,8 +539,6 @@ fn main() -> PyResult<()> {
                     uvloop
                         .as_ref(py)
                         .getattr("Loop")?
-                        .downcast::<PyType>()
-                        .unwrap()
                 )?);
                 Ok(())
             })?;

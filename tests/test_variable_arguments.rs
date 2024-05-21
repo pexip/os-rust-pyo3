@@ -3,6 +3,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
 #[pyclass]
@@ -11,13 +12,13 @@ struct MyClass {}
 #[pymethods]
 impl MyClass {
     #[staticmethod]
-    #[args(args = "*")]
+    #[pyo3(signature = (*args))]
     fn test_args(args: &PyTuple) -> &PyTuple {
         args
     }
 
     #[staticmethod]
-    #[args(kwargs = "**")]
+    #[pyo3(signature = (**kwargs))]
     fn test_kwargs(kwargs: Option<&PyDict>) -> Option<&PyDict> {
         kwargs
     }

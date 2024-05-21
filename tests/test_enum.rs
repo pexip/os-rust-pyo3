@@ -3,6 +3,7 @@
 use pyo3::prelude::*;
 use pyo3::{py_run, wrap_pyfunction};
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
 #[pyclass]
@@ -189,4 +190,27 @@ fn test_rename_variant_repr_correct() {
         let var1 = Py::new(py, RenameVariantEnum::Variant).unwrap();
         py_assert!(py, var1, "repr(var1) == 'RenameVariantEnum.VARIANT'");
     })
+}
+
+#[pyclass(rename_all = "SCREAMING_SNAKE_CASE")]
+#[allow(clippy::enum_variant_names)]
+enum RenameAllVariantsEnum {
+    VariantOne,
+    VariantTwo,
+    #[pyo3(name = "VariantThree")]
+    VariantFour,
+}
+
+#[test]
+fn test_renaming_all_enum_variants() {
+    Python::with_gil(|py| {
+        let enum_obj = py.get_type::<RenameAllVariantsEnum>();
+        py_assert!(py, enum_obj, "enum_obj.VARIANT_ONE == enum_obj.VARIANT_ONE");
+        py_assert!(py, enum_obj, "enum_obj.VARIANT_TWO == enum_obj.VARIANT_TWO");
+        py_assert!(
+            py,
+            enum_obj,
+            "enum_obj.VariantThree == enum_obj.VariantThree"
+        );
+    });
 }

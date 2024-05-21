@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString, PyTuple};
 
 #[macro_use]
+#[path = "../src/tests/common.rs"]
 mod common;
 
 /// Helper function that concatenates the error message from
@@ -562,7 +563,7 @@ pub struct TransparentFromPyWith {
 #[test]
 fn test_transparent_from_py_with() {
     Python::with_gil(|py| {
-        let result = TransparentFromPyWith::extract(PyList::new(py, &[1, 2, 3])).unwrap();
+        let result = TransparentFromPyWith::extract(PyList::new(py, [1, 2, 3])).unwrap();
         let expected = TransparentFromPyWith { len: 3 };
 
         assert_eq!(result, expected);

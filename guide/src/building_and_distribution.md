@@ -45,6 +45,8 @@ Caused by:
   suppress_build_script_link_lines=false
 ```
 
+The `PYO3_ENVIRONMENT_SIGNATURE` environment variable can be used to trigger rebuilds when its value changes, it has no other effect.
+
 ### Advanced: config files
 
 If you save the above output config from `PYO3_PRINT_CONFIG` to a file, it is possible to manually override the contents and feed it back into PyO3 using the `PYO3_CONFIG_FILE` env var.
@@ -61,7 +63,7 @@ PyO3 has some Cargo features to configure projects for building Python extension
  - The `extension-module` feature, which must be enabled when building Python extension modules.
  - The `abi3` feature and its version-specific `abi3-pyXY` companions, which are used to opt-in to the limited Python API in order to support multiple Python versions in a single wheel.
 
-This section describes each of these packaging tools before describiing how to build manually without them. It then proceeds with an explanation of the `extension-module` feature. Finally, there is a section describing PyO3's `abi3` features.
+This section describes each of these packaging tools before describing how to build manually without them. It then proceeds with an explanation of the `extension-module` feature. Finally, there is a section describing PyO3's `abi3` features.
 
 ### Packaging tools
 
@@ -69,7 +71,7 @@ The PyO3 ecosystem has two main choices to abstract the process of developing Py
 - [`maturin`] is a command-line tool to build, package and upload Python modules. It makes opinionated choices about project layout meaning it needs very little configuration. This makes it a great choice for users who are building a Python extension from scratch and don't need flexibility.
 - [`setuptools-rust`] is an add-on for `setuptools` which adds extra keyword arguments to the `setup.py` configuration file. It requires more configuration than `maturin`, however this gives additional flexibility for users adding Rust to an existing Python package that can't satisfy `maturin`'s constraints.
 
-Consult each project's documentation for full details on how to get started using them and how to upload wheels to PyPI.
+Consult each project's documentation for full details on how to get started using them and how to upload wheels to PyPI. It should be noted that while `maturin` is able to build [manylinux](https://github.com/pypa/manylinux)-compliant wheels out-of-the-box, `setuptools-rust` requires a bit more effort, [relying on Docker](https://setuptools-rust.readthedocs.io/en/latest/building_wheels.html) for this purpose.
 
 There are also [`maturin-starter`] and [`setuptools-rust-starter`] examples in the PyO3 repository.
 
@@ -86,11 +88,16 @@ You can then open a Python shell in the output directory and you'll be able to r
 
 If you're packaging your library for redistribution, you should indicated the Python interpreter your library is compiled for by including the [platform tag](#platform-tags) in its name. This prevents incompatible interpreters from trying to import your library. If you're compiling for PyPy you *must* include the platform tag, or PyPy will ignore the module.
 
-See, as an example, Bazel rules to build PyO3 on Linux at https://github.com/TheButlah/rules_pyo3.
+#### Bazel builds
+
+To use PyO3 with bazel one needs to manually configure PyO3, PyO3-ffi and PyO3-macros. In particular, one needs to make sure that it is compiled with the right python flags for the version you intend to use.
+For example see:
+1. https://github.com/OliverFM/pytorch_with_gazelle -- for a minimal example of a repo that can use PyO3, PyTorch and Gazelle to generate python Build files.
+2. https://github.com/TheButlah/rules_pyo3 -- which has more extensive support, but is outdated.
 
 #### Platform tags
 
-Rather than using just the `.so` or `.pyd` extension suggested above (depending on OS), uou can prefix the shared library extension with a platform tag to indicate the interpreter it is compatible with. You can query your interpreter's platform tag from the `sysconfig` module. Some example outputs of this are seen below:
+Rather than using just the `.so` or `.pyd` extension suggested above (depending on OS), you can prefix the shared library extension with a platform tag to indicate the interpreter it is compatible with. You can query your interpreter's platform tag from the `sysconfig` module. Some example outputs of this are seen below:
 
 ```bash
 # CPython 3.10 on macOS
@@ -113,7 +120,7 @@ The easiest way to set the correct linker arguments is to add a [`build.rs`](htt
 
 ```rust,ignore
 fn main() {
-  pyo3_build_config::add_extension_module_link_args();
+    pyo3_build_config::add_extension_module_link_args();
 }
 ```
 
@@ -160,9 +167,9 @@ Finally, don't forget that on MacOS the `extension-module` feature will cause `c
 
 ### The `extension-module` feature
 
-PyO3's `extension-module` feature is used to disable [linking](https://en.wikipedia.org/wiki/Linker_(computing)) to `libpython` on unix targets.
+PyO3's `extension-module` feature is used to disable [linking](https://en.wikipedia.org/wiki/Linker_(computing)) to `libpython` on Unix targets.
 
-This is necessary because by default PyO3 links to `libpython`. This makes binaries, tests, and examples "just work". However, Python extensions on unix must not link to libpython for [manylinux](https://www.python.org/dev/peps/pep-0513/) compliance.
+This is necessary because by default PyO3 links to `libpython`. This makes binaries, tests, and examples "just work". However, Python extensions on Unix must not link to libpython for [manylinux](https://www.python.org/dev/peps/pep-0513/) compliance.
 
 The downside of not linking to `libpython` is that binaries, tests, and examples (which usually embed Python) will fail to build. If you have an extension module as well as other outputs in a single project, you need to use optional Cargo features to disable the `extension-module` when you're not building the extension module. See [the FAQ](faq.md#i-cant-run-cargo-test-or-i-cant-build-in-a-cargo-workspace-im-having-linker-issues-like-symbol-not-found-or-undefined-reference-to-_pyexc_systemerror) for an example workaround.
 
@@ -193,9 +200,9 @@ For example, if you set the `abi3-py37` feature, your extension wheel can be use
 
 As your extension module may be run with multiple different Python versions you may occasionally find you need to check the Python version at runtime to customize behavior. See [the relevant section of this guide](./building_and_distribution/multiple_python_versions.html#checking-the-python-version-at-runtime) on supporting multiple Python versions at runtime.
 
-PyO3 is only able to link your extension module to api3 version up to and including your host Python version. E.g., if you set `abi3-py38` and try to compile the crate with a host of Python 3.7, the build will fail.
+PyO3 is only able to link your extension module to abi3 version up to and including your host Python version. E.g., if you set `abi3-py38` and try to compile the crate with a host of Python 3.7, the build will fail.
 
-> Note: If you set more that one of these api version feature flags the lowest version always wins. For example, with both `abi3-py37` and `abi3-py38` set, PyO3 would build a wheel which supports Python 3.7 and up.
+> Note: If you set more that one of these `abi3` version feature flags the lowest version always wins. For example, with both `abi3-py37` and `abi3-py38` set, PyO3 would build a wheel which supports Python 3.7 and up.
 
 #### Building `abi3` extensions without a Python interpreter
 
@@ -245,7 +252,7 @@ On Windows static linking is almost never done, so Python distributions don't us
 
 The Python static library is usually called `libpython.a`.
 
-Static linking has a lot of complications, listed below. For these reasons PyO3 does not yet have first-class support for this embedding mode. See [issue 416 on PyO3's Github](https://github.com/PyO3/pyo3/issues/416) for more information and to discuss any issues you encounter.
+Static linking has a lot of complications, listed below. For these reasons PyO3 does not yet have first-class support for this embedding mode. See [issue 416 on PyO3's GitHub](https://github.com/PyO3/pyo3/issues/416) for more information and to discuss any issues you encounter.
 
 The [`auto-initialize`](features.md#auto-initialize) feature is deliberately disabled when embedding the interpreter statically because this is often unintentionally done by new users to PyO3 running test programs. Trying out PyO3 is much easier using dynamic embedding.
 
@@ -265,11 +272,11 @@ The known complications are:
     /usr/bin/ld: /usr/lib/gcc/x86_64-linux-gnu/9/../../../x86_64-linux-gnu/libpython3.9.a(zlibmodule.o): relocation R_X86_64_32 against `.data' can not be used when making a PIE object; recompile with -fPIE
     ```
 
-If you encounter these or other complications when linking the interpreter statically, discuss them on [issue 416 on PyO3's Github](https://github.com/PyO3/pyo3/issues/416). It is hoped that eventually that discussion will contain enough information and solutions that PyO3 can offer first-class support for static embedding.
+If you encounter these or other complications when linking the interpreter statically, discuss them on [issue 416 on PyO3's GitHub](https://github.com/PyO3/pyo3/issues/416). It is hoped that eventually that discussion will contain enough information and solutions that PyO3 can offer first-class support for static embedding.
 
 ### Import your module when embedding the Python interpreter
 
-When you run your Rust binary with an embedded interpreter, any `#[pymodule]` created modules won't be accessible to import unless added to a table called `PyImport_Inittab` before the embedded interpreter is initialized. This will cause Python statements in your embedded interpreter such as `import your_new_module` to fail. You can call the macro [`append_to_inittab`]({{#PYO3_DOCS_URL}}/pyo3/macro.append_to_inittab.html) with your module before initializing the Python interpreter to add the module function into that table. (The Python interpreter will be initialized by calling `prepare_freethreaded_python`, `with_embedded_interpreter`, or `Python::with_gil` with the [`auto-initialize`](features.md#auto-initialize) feature enabled.)
+When you run your Rust binary with an embedded interpreter, any `#[pymodule]` created modules won't be accessible to import unless added to a table called `PyImport_Inittab` before the embedded interpreter is initialized. This will cause Python statements in your embedded interpreter such as `import your_new_module` to fail. You can call the macro [`append_to_inittab`]({{#PYO3_DOCS_URL}}/pyo3/macro.append_to_inittab.html) with your module before initializing the Python interpreter to add the module function into that table. (The Python interpreter will be initialized by calling `prepare_freethreaded_python`, `with_embedded_python_interpreter`, or `Python::with_gil` with the [`auto-initialize`](features.md#auto-initialize) feature enabled.)
 
 ## Cross Compiling
 
@@ -298,7 +305,7 @@ It is possible to override the default `dlltool` command name for the cross targ
 by setting `PYO3_MINGW_DLLTOOL` environment variable.
 *Note*: MSVC targets require LLVM binutils or MSVC build tools to be available on the host system.
 More specifically, `python3-dll-a` requires `llvm-dlltool` or `lib.exe` executable to be present in `PATH` when
-targeting `*-pc-windows-msvc`. Zig compiler executable can be used in place of `llvm-dlltool` when `ZIG_COMMAND`
+targeting `*-pc-windows-msvc`. The Zig compiler executable can be used in place of `llvm-dlltool` when the `ZIG_COMMAND`
 environment variable is set to the installed Zig program name (`"zig"` or `"python -m ziglang"`).
 
 An example might look like the following (assuming your target's sysroot is at `/home/pyo3/cross/sysroot` and that your target is `armv7`):
