@@ -36,7 +36,7 @@ Depends:
  librust-anyhow-1+default-dev,
  librust-cfg-if-1+default-dev,
 # librust-chrono-0.4-dev (>= 0.4.25-~~),
- librust-either-1+default-dev (>= 1.9-~~),
+# librust-either-1+default-dev (>= 1.9-~~),
  librust-eyre-0.6+default-dev | librust-eyre-0.5+default-dev | librust-eyre-0.4+default-dev,
  librust-hashbrown-0.14+default-dev | librust-hashbrown-0.13+default-dev | librust-hashbrown-0.12+default-dev | librust-hashbrown-0.11+default-dev | librust-hashbrown-0.10+default-dev | librust-hashbrown-0.9+default-dev,
  librust-indexmap+default-dev (>= 1.6-~~),
@@ -71,7 +71,7 @@ Depends:
  librust-pyo3-macros-0.20.2+multiple-pymethods-dev,
  librust-rust-decimal-1-dev,
  librust-serde-1+default-dev,
- librust-smallvec-1+default-dev,
+# librust-smallvec-1+default-dev,
  librust-unindent-0.2+default-dev (>= 0.2.1-~~)
 Provides:
  librust-pyo3+abi3-dev (= ${binary:Version}),
