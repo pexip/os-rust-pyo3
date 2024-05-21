@@ -5,6 +5,7 @@ use pyo3::py_run;
 use pyo3::types::{IntoPyDict, PyDict, PyList, PySet, PyString, PyTuple, PyType};
 use pyo3::PyCell;
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
 #[pyclass]
@@ -75,6 +76,14 @@ impl ClassMethod {
     fn method(cls: &PyType) -> PyResult<String> {
         Ok(format!("{}.method()!", cls.name()?))
     }
+
+    #[classmethod]
+    fn method_owned(cls: Py<PyType>) -> PyResult<String> {
+        Ok(format!(
+            "{}.method_owned()!",
+            Python::with_gil(|gil| cls.as_ref(gil).name().map(ToString::to_string))?
+        ))
+    }
 }
 
 #[test]
@@ -83,6 +92,11 @@ fn class_method() {
         let d = [("C", py.get_type::<ClassMethod>())].into_py_dict(py);
         py_assert!(py, *d, "C.method() == 'ClassMethod.method()!'");
         py_assert!(py, *d, "C().method() == 'ClassMethod.method()!'");
+        py_assert!(
+            py,
+            *d,
+            "C().method_owned() == 'ClassMethod.method_owned()!'"
+        );
         py_assert!(py, *d, "C.method.__doc__ == 'Test class method.'");
         py_assert!(py, *d, "C().method.__doc__ == 'Test class method.'");
     });
@@ -163,19 +177,16 @@ fn static_method_with_args() {
 }
 
 #[pyclass]
-struct MethArgs {}
+struct MethSignature {}
 
 #[pymethods]
-impl MethArgs {
-    #[args(test)]
+impl MethSignature {
+    #[pyo3(signature = (test = None))]
     fn get_optional(&self, test: Option<i32>) -> i32 {
         test.unwrap_or(10)
     }
+    #[pyo3(signature = (test = None))]
     fn get_optional2(&self, test: Option<i32>) -> Option<i32> {
-        test
-    }
-    #[args(test = "None")]
-    fn get_optional3(&self, test: Option<i32>) -> Option<i32> {
         test
     }
     fn get_optional_positional(
@@ -187,20 +198,20 @@ impl MethArgs {
         t2
     }
 
-    #[args(test = "10")]
+    #[pyo3(signature = (test = 10))]
     fn get_default(&self, test: i32) -> i32 {
         test
     }
-    #[args("*", test = 10)]
+    #[pyo3(signature = (*, test = 10))]
     fn get_kwarg(&self, test: i32) -> i32 {
         test
     }
-    #[args(args = "*", kwargs = "**")]
+    #[pyo3(signature = (*args, **kwargs))]
     fn get_kwargs(&self, py: Python<'_>, args: &PyTuple, kwargs: Option<&PyDict>) -> PyObject {
         [args.into(), kwargs.to_object(py)].to_object(py)
     }
 
-    #[args(args = "*", kwargs = "**")]
+    #[pyo3(signature = (a, *args, **kwargs))]
     fn get_pos_arg_kw(
         &self,
         py: Python<'_>,
@@ -211,42 +222,42 @@ impl MethArgs {
         [a.to_object(py), args.into(), kwargs.to_object(py)].to_object(py)
     }
 
-    #[args(a, b, "/")]
+    #[pyo3(signature = (a, b, /))]
     fn get_pos_only(&self, a: i32, b: i32) -> i32 {
         a + b
     }
 
-    #[args(a, "/", b)]
+    #[pyo3(signature = (a, /, b))]
     fn get_pos_only_and_pos(&self, a: i32, b: i32) -> i32 {
         a + b
     }
 
-    #[args(a, "/", b, c = 5)]
+    #[pyo3(signature = (a, /, b, c = 5))]
     fn get_pos_only_and_pos_and_kw(&self, a: i32, b: i32, c: i32) -> i32 {
         a + b + c
     }
 
-    #[args(a, "/", "*", b)]
+    #[pyo3(signature = (a, /, *, b))]
     fn get_pos_only_and_kw_only(&self, a: i32, b: i32) -> i32 {
         a + b
     }
 
-    #[args(a, "/", "*", b = 3)]
+    #[pyo3(signature = (a, /, *, b = 3))]
     fn get_pos_only_and_kw_only_with_default(&self, a: i32, b: i32) -> i32 {
         a + b
     }
 
-    #[args(a, "/", b, "*", c, d = 5)]
+    #[pyo3(signature = (a, /, b, *, c, d = 5))]
     fn get_all_arg_types_together(&self, a: i32, b: i32, c: i32, d: i32) -> i32 {
         a + b + c + d
     }
 
-    #[args(a, "/", args = "*")]
+    #[pyo3(signature = (a, /, *args))]
     fn get_pos_only_with_varargs(&self, a: i32, args: Vec<i32>) -> i32 {
         a + args.iter().sum::<i32>()
     }
 
-    #[args(a, "/", kwargs = "**")]
+    #[pyo3(signature = (a, /, **kwargs))]
     fn get_pos_only_with_kwargs(
         &self,
         py: Python<'_>,
@@ -256,58 +267,67 @@ impl MethArgs {
         [a.to_object(py), kwargs.to_object(py)].to_object(py)
     }
 
-    #[args("*", a = 2, b = 3)]
+    #[pyo3(signature = (a=0, /, **kwargs))]
+    fn get_optional_pos_only_with_kwargs(
+        &self,
+        py: Python<'_>,
+        a: i32,
+        kwargs: Option<&PyDict>,
+    ) -> PyObject {
+        [a.to_object(py), kwargs.to_object(py)].to_object(py)
+    }
+
+    #[pyo3(signature = (*, a = 2, b = 3))]
     fn get_kwargs_only_with_defaults(&self, a: i32, b: i32) -> i32 {
         a + b
     }
 
-    #[args("*", a, b)]
+    #[pyo3(signature = (*, a, b))]
     fn get_kwargs_only(&self, a: i32, b: i32) -> i32 {
         a + b
     }
 
-    #[args("*", a = 1, b)]
+    #[pyo3(signature = (*, a = 1, b))]
     fn get_kwargs_only_with_some_default(&self, a: i32, b: i32) -> i32 {
         a + b
     }
 
-    #[args(args = "*", a)]
+    #[pyo3(signature = (*args, a))]
     fn get_args_and_required_keyword(&self, py: Python<'_>, args: &PyTuple, a: i32) -> PyObject {
         (args, a).to_object(py)
     }
 
-    #[args(a, b = 2, "*", c = 3)]
+    #[pyo3(signature = (a, b = 2, *, c = 3))]
     fn get_pos_arg_kw_sep1(&self, a: i32, b: i32, c: i32) -> i32 {
         a + b + c
     }
 
-    #[args(a, "*", b = 2, c = 3)]
+    #[pyo3(signature = (a, *, b = 2, c = 3))]
     fn get_pos_arg_kw_sep2(&self, a: i32, b: i32, c: i32) -> i32 {
         a + b + c
     }
 
-    #[args(kwargs = "**")]
+    #[pyo3(signature = (a, **kwargs))]
     fn get_pos_kw(&self, py: Python<'_>, a: i32, kwargs: Option<&PyDict>) -> PyObject {
         [a.to_object(py), kwargs.to_object(py)].to_object(py)
     }
+
     // "args" can be anything that can be extracted from PyTuple
-    #[args(args = "*")]
+    #[pyo3(signature = (*args))]
     fn args_as_vec(&self, args: Vec<i32>) -> i32 {
         args.iter().sum()
     }
 }
 
 #[test]
-fn meth_args() {
+fn meth_signature() {
     Python::with_gil(|py| {
-        let inst = Py::new(py, MethArgs {}).unwrap();
+        let inst = Py::new(py, MethSignature {}).unwrap();
 
         py_run!(py, inst, "assert inst.get_optional() == 10");
         py_run!(py, inst, "assert inst.get_optional(100) == 100");
         py_run!(py, inst, "assert inst.get_optional2() == None");
         py_run!(py, inst, "assert inst.get_optional2(100) == 100");
-        py_run!(py, inst, "assert inst.get_optional3() == None");
-        py_run!(py, inst, "assert inst.get_optional3(100) == 100");
         py_run!(
             py,
             inst,
@@ -505,6 +525,22 @@ fn meth_args() {
             inst,
             "inst.get_pos_only_with_kwargs(a = 10, b = 10)",
             PyTypeError
+        );
+
+        py_run!(
+            py,
+            inst,
+            "assert inst.get_optional_pos_only_with_kwargs() == [0, None]"
+        );
+        py_run!(
+            py,
+            inst,
+            "assert inst.get_optional_pos_only_with_kwargs(10) == [10, None]"
+        );
+        py_run!(
+            py,
+            inst,
+            "assert inst.get_optional_pos_only_with_kwargs(a=10) == [0, {'a': 10}]"
         );
 
         py_run!(py, inst, "assert inst.get_kwargs_only_with_defaults() == 5");
@@ -890,6 +926,11 @@ impl r#RawIdents {
 
     #[classattr]
     const r#CLASS_ATTR_CONST: i32 = 6;
+
+    #[pyo3(signature = (r#struct = "foo"))]
+    fn method_with_keyword<'a>(&self, r#struct: &'a str) -> &'a str {
+        r#struct
+    }
 }
 
 #[test]
@@ -923,6 +964,10 @@ fn test_raw_idents() {
 
             assert raw_idents_type.class_attr_fn == 5
             assert raw_idents_type.CLASS_ATTR_CONST == 6
+
+            assert instance.method_with_keyword() == "foo"
+            assert instance.method_with_keyword("bar") == "bar"
+            assert instance.method_with_keyword(struct="baz") == "baz"
             "#
         );
     })
@@ -974,6 +1019,33 @@ issue_1506!(
     impl Issue1506 {
         fn issue_1506(
             &self,
+            _py: Python<'_>,
+            _arg: &PyAny,
+            _args: &PyTuple,
+            _kwargs: Option<&PyDict>,
+        ) {
+        }
+
+        fn issue_1506_mut(
+            &mut self,
+            _py: Python<'_>,
+            _arg: &PyAny,
+            _args: &PyTuple,
+            _kwargs: Option<&PyDict>,
+        ) {
+        }
+
+        fn issue_1506_custom_receiver(
+            _slf: Py<Self>,
+            _py: Python<'_>,
+            _arg: &PyAny,
+            _args: &PyTuple,
+            _kwargs: Option<&PyDict>,
+        ) {
+        }
+
+        fn issue_1506_custom_receiver_explicit(
+            _slf: Py<Issue1506>,
             _py: Python<'_>,
             _arg: &PyAny,
             _args: &PyTuple,
@@ -1038,7 +1110,7 @@ fn test_option_pyclass_arg() {
     #[pyclass]
     struct SomePyClass {}
 
-    #[pyfunction(arg = "None")]
+    #[pyfunction(signature = (arg=None))]
     fn option_class_arg(arg: Option<&SomePyClass>) -> Option<SomePyClass> {
         arg.map(|_| SomePyClass {})
     }
@@ -1053,4 +1125,20 @@ fn test_option_pyclass_arg() {
             .extract::<Py<SomePyClass>>()
             .is_ok());
     })
+}
+
+#[test]
+fn test_issue_2988() {
+    #[pyfunction]
+    #[pyo3(signature = (
+        _data = vec![],
+        _data2 = vec![],
+    ))]
+    pub fn _foo(
+        _data: Vec<i32>,
+        // The from_py_with here looks a little odd, we just need some way
+        // to encourage the macro to expand the from_py_with default path too
+        #[pyo3(from_py_with = "PyAny::extract")] _data2: Vec<i32>,
+    ) {
+    }
 }

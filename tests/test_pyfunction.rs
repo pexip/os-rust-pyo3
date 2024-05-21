@@ -1,5 +1,7 @@
 #![cfg(feature = "macros")]
 
+use std::collections::HashMap;
+
 #[cfg(not(Py_LIMITED_API))]
 use pyo3::buffer::PyBuffer;
 use pyo3::prelude::*;
@@ -9,9 +11,10 @@ use pyo3::types::PyDateTime;
 use pyo3::types::PyFunction;
 use pyo3::types::{self, PyCFunction};
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
-#[pyfunction(arg = "true")]
+#[pyfunction(signature = (arg = true))]
 fn optional_bool(arg: Option<bool>) -> String {
     format!("{:?}", arg)
 }
@@ -181,7 +184,7 @@ fn test_from_py_with_defaults() {
         int.unwrap_or(0)
     }
 
-    #[pyfunction(len = "0")]
+    #[pyfunction(signature = (len=0))]
     fn from_py_with_default(#[pyo3(from_py_with = "PyAny::len")] len: usize) -> usize {
         len
     }
@@ -418,9 +421,12 @@ fn test_closure() {
                 Ok(res)
             })
         };
-        let closure_py = PyCFunction::new_closure(f, py).unwrap();
+        let closure_py =
+            PyCFunction::new_closure(py, Some("test_fn"), Some("test_fn doc"), f).unwrap();
 
         py_assert!(py, closure_py, "closure_py(42) == [43]");
+        py_assert!(py, closure_py, "closure_py.__name__ == 'test_fn'");
+        py_assert!(py, closure_py, "closure_py.__doc__ == 'test_fn doc'");
         py_assert!(
             py,
             closure_py,
@@ -439,7 +445,7 @@ fn test_closure_counter() {
                 *counter += 1;
                 Ok(*counter)
             };
-        let counter_py = PyCFunction::new_closure(counter_fn, py).unwrap();
+        let counter_py = PyCFunction::new_closure(py, None, None, counter_fn).unwrap();
 
         py_assert!(py, counter_py, "counter_py() == 1");
         py_assert!(py, counter_py, "counter_py() == 2");
@@ -473,38 +479,53 @@ fn use_pyfunction() {
     })
 }
 
+#[pyclass]
+struct Key(String);
+
+#[pyclass]
+struct Value(i32);
+
+#[pyfunction]
+fn return_value_borrows_from_arguments<'py>(
+    py: Python<'py>,
+    key: &'py Key,
+    value: &'py Value,
+) -> HashMap<&'py str, i32> {
+    py.allow_threads(move || {
+        let mut map = HashMap::new();
+        map.insert(key.0.as_str(), value.0);
+        map
+    })
+}
+
 #[test]
-fn required_argument_after_option() {
-    #[pyfunction]
-    pub fn foo(x: Option<i32>, y: i32) -> i32 {
-        y + x.unwrap_or_default()
+fn test_return_value_borrows_from_arguments() {
+    Python::with_gil(|py| {
+        let function = wrap_pyfunction!(return_value_borrows_from_arguments, py).unwrap();
+
+        let key = Py::new(py, Key("key".to_owned())).unwrap();
+        let value = Py::new(py, Value(42)).unwrap();
+
+        py_assert!(py, function key value, "function(key, value) == { \"key\": 42 }");
+    });
+}
+
+#[test]
+fn test_some_wrap_arguments() {
+    // https://github.com/PyO3/pyo3/issues/3460
+    const NONE: Option<u8> = None;
+    #[pyfunction(signature = (a = 1, b = Some(2), c = None, d = NONE))]
+    fn some_wrap_arguments(
+        a: Option<u8>,
+        b: Option<u8>,
+        c: Option<u8>,
+        d: Option<u8>,
+    ) -> [Option<u8>; 4] {
+        [a, b, c, d]
     }
 
     Python::with_gil(|py| {
-        let f = wrap_pyfunction!(foo, py).unwrap();
-
-        // it is an error to call this function with no arguments
-        py_expect_exception!(
-            py,
-            f,
-            "f()",
-            PyTypeError,
-            "foo() missing 2 required positional arguments: 'x' and 'y'"
-        );
-
-        // it is an error to call this function with one argument
-        py_expect_exception!(
-            py,
-            f,
-            "f(None)",
-            PyTypeError,
-            "foo() missing 1 required positional argument: 'y'"
-        );
-
-        // ok to call with two arguments
-        py_assert!(py, f, "f(None, 5) == 5");
-
-        // ok to call with keyword arguments
-        py_assert!(py, f, "f(x=None, y=5) == 5");
+        let function = wrap_pyfunction!(some_wrap_arguments, py).unwrap();
+        py_assert!(py, function, "function() == [1, 2, None, None]");
     })
 }

@@ -40,10 +40,10 @@ print(n)
 ### String representations
 
 It can't even print an user-readable representation of itself! We can fix that by defining the
- `__repr__` and `__str__` methods inside a `#[pymethods]` block. We do this by accessing the value
- contained inside `Number`.
+`__repr__` and `__str__` methods inside a `#[pymethods]` block. We do this by accessing the value
+contained inside `Number`.
 
- ```rust
+```rust
 # use pyo3::prelude::*;
 #
 # #[pyclass]
@@ -61,11 +61,35 @@ impl Number {
         //                       👇 Tuple field access in Rust uses a dot
         format!("Number({})", self.0)
     }
-
     // `__str__` is generally used to create an "informal" representation, so we
     // just forward to `i32`'s `ToString` trait implementation to print a bare number.
     fn __str__(&self) -> String {
         self.0.to_string()
+    }
+}
+```
+
+#### Accessing the class name
+
+In the `__repr__`, we used a hard-coded class name. This is sometimes not ideal,
+because if the class is subclassed in Python, we would like the repr to reflect
+the subclass name. This is typically done in Python code by accessing
+`self.__class__.__name__`. In order to be able to access the Python type information
+*and* the Rust struct, we need to use a `PyCell` as the `self` argument.
+
+```rust
+# use pyo3::prelude::*;
+#
+# #[pyclass]
+# struct Number(i32);
+#
+#[pymethods]
+impl Number {
+    fn __repr__(slf: &PyCell<Self>) -> PyResult<String> {
+        // This is the equivalent of `self.__class__.__name__` in Python.
+        let class_name: &str = slf.get_type().name()?;
+        // To access fields of the Rust struct, we need to borrow the `PyCell`.
+        Ok(format!("{}({})", class_name, slf.borrow().0))
     }
 }
 ```
@@ -114,19 +138,19 @@ impl Number {
 > ```rust
 > # use pyo3::prelude::*;
 > #[pyclass]
-> struct NotHashable { }
+> struct NotHashable {}
 >
 > #[pymethods]
 > impl NotHashable {
->    #[classattr]
->    const __hash__: Option<Py<PyAny>> = None;
->}
+>     #[classattr]
+>     const __hash__: Option<Py<PyAny>> = None;
+> }
 > ```
 
 ### Comparisons
 
-Unlike in Python, PyO3 does not provide the magic comparison methods you might expect like `__eq__`,
- `__lt__` and so on. Instead you have to implement all six operations at once with `__richcmp__`.
+PyO3 supports the usual magic comparison methods available in Python such as `__eq__`, `__lt__`
+and so on. It is also possible to support all six operations at once with `__richcmp__`.
 This method will be called with a value of `CompareOp` depending on the operation.
 
 ```rust
@@ -174,13 +198,10 @@ impl Number {
 It checks that the `std::cmp::Ordering` obtained from Rust's `Ord` matches
 the given `CompareOp`.
 
-Alternatively, if you want to leave some operations unimplemented, you can
-return `py.NotImplemented()` for some of the operations:
+Alternatively, you can implement just equality using `__eq__`:
 
 
 ```rust
-use pyo3::class::basic::CompareOp;
-
 # use pyo3::prelude::*;
 #
 # #[pyclass]
@@ -188,14 +209,20 @@ use pyo3::class::basic::CompareOp;
 #
 #[pymethods]
 impl Number {
-    fn __richcmp__(&self, other: &Self, op: CompareOp, py: Python<'_>) -> PyObject {
-        match op {
-            CompareOp::Eq => (self.0 == other.0).into_py(py),
-            CompareOp::Ne => (self.0 != other.0).into_py(py),
-            _ => py.NotImplemented(),
-        }
+    fn __eq__(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 }
+
+# fn main() -> PyResult<()> {
+#     Python::with_gil(|py| {
+#         let x = PyCell::new(py, Number(4))?;
+#         let y = PyCell::new(py, Number(4))?;
+#         assert!(x.eq(y)?);
+#         assert!(!x.ne(y)?);
+#         Ok(())
+#     })
+# }
 ```
 
 ### Truthyness
@@ -235,8 +262,9 @@ impl Number {
         Self(value)
     }
 
-    fn __repr__(&self) -> String {
-        format!("Number({})", self.0)
+    fn __repr__(slf: &PyCell<Self>) -> PyResult<String> {
+        let class_name: &str = slf.get_type().name()?;
+        Ok(format!("{}({})", class_name, slf.borrow().0))
     }
 
     fn __str__(&self) -> String {

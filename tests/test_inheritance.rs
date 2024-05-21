@@ -1,10 +1,11 @@
 #![cfg(feature = "macros")]
 
 use pyo3::prelude::*;
-use pyo3::{py_run, PyTypeInfo};
+use pyo3::py_run;
 
 use pyo3::types::IntoPyDict;
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
 #[pyclass(subclass)]
@@ -26,7 +27,7 @@ fn subclass() {
             None,
             Some(d),
         )
-        .map_err(|e| e.print(py))
+        .map_err(|e| e.display(py))
         .unwrap();
     });
 }
@@ -107,14 +108,14 @@ fn mutation_fails() {
 #[test]
 fn is_subclass_and_is_instance() {
     Python::with_gil(|py| {
-        let sub_ty = SubClass::type_object(py);
-        let base_ty = BaseClass::type_object(py);
+        let sub_ty = py.get_type::<SubClass>();
+        let base_ty = py.get_type::<BaseClass>();
         assert!(sub_ty.is_subclass_of::<BaseClass>().unwrap());
         assert!(sub_ty.is_subclass(base_ty).unwrap());
 
         let obj = PyCell::new(py, SubClass::new()).unwrap();
-        assert!(obj.is_instance_of::<SubClass>().unwrap());
-        assert!(obj.is_instance_of::<BaseClass>().unwrap());
+        assert!(obj.is_instance_of::<SubClass>());
+        assert!(obj.is_instance_of::<BaseClass>());
         assert!(obj.is_instance(sub_ty).unwrap());
         assert!(obj.is_instance(base_ty).unwrap());
     });
@@ -259,7 +260,7 @@ mod inheriting_native_type {
     #[pymethods]
     impl CustomException {
         #[new]
-        fn new() -> Self {
+        fn new(_exc_arg: &PyAny) -> Self {
             CustomException {
                 context: "Hello :)",
             }
@@ -308,10 +309,9 @@ impl SimpleClass {
 #[test]
 fn test_subclass_ref_counts() {
     // regression test for issue #1363
-    use pyo3::PyTypeInfo;
     Python::with_gil(|py| {
         #[allow(non_snake_case)]
-        let SimpleClass = SimpleClass::type_object(py);
+        let SimpleClass = py.get_type::<SimpleClass>();
         py_run!(
             py,
             SimpleClass,
@@ -337,6 +337,29 @@ fn test_subclass_ref_counts() {
             # (With issue #1363 the count will be decreased.)
             assert after == count or (after == count + 1000), f"{after} vs {count}"
             "#
+        );
+    })
+}
+
+#[test]
+#[cfg(not(Py_LIMITED_API))]
+fn module_add_class_inherit_bool_fails() {
+    use pyo3::types::PyBool;
+
+    #[pyclass(extends = PyBool)]
+    struct ExtendsBool;
+
+    Python::with_gil(|py| {
+        let m = PyModule::new(py, "test_module").unwrap();
+
+        let err = m.add_class::<ExtendsBool>().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "RuntimeError: An error occurred while initializing class ExtendsBool"
+        );
+        assert_eq!(
+            err.cause(py).unwrap().to_string(),
+            "TypeError: type 'bool' is not an acceptable base type"
         );
     })
 }

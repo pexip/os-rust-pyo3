@@ -24,6 +24,7 @@
 - [Debugging](debugging.md)
 - [Features reference](features.md)
 - [Memory management](memory.md)
+- [Performance](performance.md)
 - [Advanced topics](advanced.md)
 - [Building and distribution](building_and_distribution.md)
   - [Supporting multiple Python versions](building_and_distribution/multiple_python_versions.md)
@@ -35,9 +36,8 @@
 ---
 
 [Appendix A: Migration guide](migration.md)
-[Appendix B: PyO3 and rust-cpython](rust_cpython.md)
-[Appendix C: Trait bounds](trait_bounds.md)
-[Appendix D: Python typing hints](python_typing_hints.md)
+[Appendix B: Trait bounds](trait_bounds.md)
+[Appendix C: Python typing hints](python_typing_hints.md)
 [CHANGELOG](changelog.md)
 
 ---

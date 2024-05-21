@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 use pyo3::{py_run, PyClass};
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
 #[pyclass]
@@ -148,7 +149,7 @@ struct EmptyClassInModule {}
 
 // Ignored because heap types do not show up as being in builtins, instead they
 // raise AttributeError:
-// https://github.com/python/cpython/blob/master/Objects/typeobject.c#L544-L573
+// https://github.com/python/cpython/blob/v3.11.1/Objects/typeobject.c#L541-L570
 #[test]
 #[ignore]
 fn empty_class_in_module() {
@@ -228,38 +229,47 @@ impl UnsendableChild {
 }
 
 fn test_unsendable<T: PyClass + 'static>() -> PyResult<()> {
-    let obj = std::thread::spawn(|| -> PyResult<_> {
+    let obj = Python::with_gil(|py| -> PyResult<_> {
+        let obj: Py<T> = PyType::new::<T>(py).call1((5,))?.extract()?;
+
+        // Accessing the value inside this thread should not panic
+        let caught_panic =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> PyResult<_> {
+                assert_eq!(obj.as_ref(py).getattr("value")?.extract::<usize>()?, 5);
+                Ok(())
+            }))
+            .is_err();
+
+        assert!(!caught_panic);
+        Ok(obj)
+    })?;
+
+    let keep_obj_here = obj.clone();
+
+    let caught_panic = std::thread::spawn(move || {
+        // This access must panic
         Python::with_gil(|py| {
-            let obj: Py<T> = PyType::new::<T>(py).call1((5,))?.extract()?;
-
-            // Accessing the value inside this thread should not panic
-            let caught_panic =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> PyResult<_> {
-                    assert_eq!(obj.as_ref(py).getattr("value")?.extract::<usize>()?, 5);
-                    Ok(())
-                }))
-                .is_err();
-
-            assert!(!caught_panic);
-            Ok(obj)
-        })
+            obj.borrow(py);
+        });
     })
-    .join()
-    .unwrap()?;
+    .join();
 
-    // This access must panic
-    Python::with_gil(|py| {
-        obj.borrow(py);
-    });
+    Python::with_gil(|_py| drop(keep_obj_here));
 
-    panic!("Borrowing unsendable from receiving thread did not panic.");
+    if let Err(err) = caught_panic {
+        if let Some(msg) = err.downcast_ref::<String>() {
+            panic!("{}", msg);
+        }
+    }
+
+    Ok(())
 }
 
 /// If a class is marked as `unsendable`, it panics when accessed by another thread.
 #[test]
 #[cfg_attr(target_arch = "wasm32", ignore)]
 #[should_panic(
-    expected = "test_class_basics::UnsendableBase is unsendable, but sent to another thread!"
+    expected = "test_class_basics::UnsendableBase is unsendable, but sent to another thread"
 )]
 fn panic_unsendable_base() {
     test_unsendable::<UnsendableBase>().unwrap();
@@ -268,7 +278,7 @@ fn panic_unsendable_base() {
 #[test]
 #[cfg_attr(target_arch = "wasm32", ignore)]
 #[should_panic(
-    expected = "test_class_basics::UnsendableBase is unsendable, but sent to another thread!"
+    expected = "test_class_basics::UnsendableBase is unsendable, but sent to another thread"
 )]
 fn panic_unsendable_child() {
     test_unsendable::<UnsendableChild>().unwrap();
@@ -500,5 +510,84 @@ fn inherited_weakref() {
             inst,
             "import weakref; assert weakref.ref(inst)() is inst"
         );
+    });
+}
+
+#[test]
+fn access_frozen_class_without_gil() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[pyclass(frozen)]
+    struct FrozenCounter {
+        value: AtomicUsize,
+    }
+
+    let py_counter: Py<FrozenCounter> = Python::with_gil(|py| {
+        let counter = FrozenCounter {
+            value: AtomicUsize::new(0),
+        };
+
+        let cell = PyCell::new(py, counter).unwrap();
+
+        cell.get().value.fetch_add(1, Ordering::Relaxed);
+
+        cell.into()
+    });
+
+    assert_eq!(py_counter.get().value.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+#[cfg(Py_3_8)] // sys.unraisablehook not available until Python 3.8
+#[cfg_attr(target_arch = "wasm32", ignore)]
+fn drop_unsendable_elsewhere() {
+    use common::UnraisableCapture;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::thread::spawn;
+
+    #[pyclass(unsendable)]
+    struct Unsendable {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for Unsendable {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    Python::with_gil(|py| {
+        let capture = UnraisableCapture::install(py);
+
+        let dropped = Arc::new(AtomicBool::new(false));
+
+        let unsendable = Py::new(
+            py,
+            Unsendable {
+                dropped: dropped.clone(),
+            },
+        )
+        .unwrap();
+
+        py.allow_threads(|| {
+            spawn(move || {
+                Python::with_gil(move |_py| {
+                    drop(unsendable);
+                });
+            })
+            .join()
+            .unwrap();
+        });
+
+        assert!(!dropped.load(Ordering::SeqCst));
+
+        let (err, object) = capture.borrow_mut(py).capture.take().unwrap();
+        assert_eq!(err.to_string(), "RuntimeError: test_class_basics::drop_unsendable_elsewhere::Unsendable is unsendable, but is being dropped on another thread");
+        assert!(object.is_none(py));
+
+        capture.borrow_mut(py).uninstall(py);
     });
 }

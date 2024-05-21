@@ -55,25 +55,20 @@
 //! #    }
 //! # }
 //! #
-//! // This function is exported to Python.
+//! // The function which is exported to Python looks roughly like the following
 //! unsafe extern "C" fn __pymethod_increment__(
 //!     _slf: *mut pyo3::ffi::PyObject,
 //!     _args: *mut pyo3::ffi::PyObject,
 //! ) -> *mut pyo3::ffi::PyObject {
 //!     use :: pyo3 as _pyo3;
-//!     let gil = _pyo3::GILPool::new();
-//!     let _py = gil.python();
-//!     _pyo3::callback::panic_result_into_callback_output(
-//!         _py,
-//!         ::std::panic::catch_unwind(move || -> _pyo3::PyResult<_> {
-//!             let _cell = _py
-//!                 .from_borrowed_ptr::<_pyo3::PyAny>(_slf)
-//!                 .downcast::<_pyo3::PyCell<Number>>()?;
-//!             let mut _ref = _cell.try_borrow_mut()?;
-//!             let _slf: &mut Number = &mut *_ref;
-//!             _pyo3::callback::convert(_py, Number::increment(_slf))
-//!         }),
-//!     )
+//!     _pyo3::impl_::trampoline::noargs(_slf, _args, |py, _slf| {
+//!         let _cell = py
+//!             .from_borrowed_ptr::<_pyo3::PyAny>(_slf)
+//!             .downcast::<_pyo3::PyCell<Number>>()?;
+//!         let mut _ref = _cell.try_borrow_mut()?;
+//!         let _slf: &mut Number = &mut *_ref;
+//!         _pyo3::callback::convert(py, Number::increment(_slf))
+//!     })
 //! }
 //! ```
 //!
@@ -110,7 +105,7 @@
 //!     // `PyRefMut` before borrowing again.
 //!     drop(guard);
 //!
-//!     let n_immutable : &Number = &n.as_ref(py).borrow();
+//!     let n_immutable: &Number = &n.as_ref(py).borrow();
 //!     assert_eq!(n_immutable.inner, 1);
 //!
 //!     Ok(())
@@ -132,7 +127,7 @@
 //!     std::mem::swap(&mut a.inner, &mut b.inner);
 //! }
 //! # fn main() {
-//! #     Python::with_gil(|py|{
+//! #     Python::with_gil(|py| {
 //! #         let n = Py::new(py, Number{inner: 35}).unwrap();
 //! #         let n2 = n.clone_ref(py);
 //! #         assert!(n.is(&n2));
@@ -169,7 +164,7 @@
 //! }
 //! # fn main() {
 //! #     // With duplicate numbers
-//! #     Python::with_gil(|py|{
+//! #     Python::with_gil(|py| {
 //! #         let n = Py::new(py, Number{inner: 35}).unwrap();
 //! #         let n2 = n.clone_ref(py);
 //! #         assert!(n.is(&n2));
@@ -178,7 +173,7 @@
 //! #     });
 //! #
 //! #     // With two different numbers
-//! #     Python::with_gil(|py|{
+//! #     Python::with_gil(|py| {
 //! #         let n = Py::new(py, Number{inner: 35}).unwrap();
 //! #         let n2 = Py::new(py, Number{inner: 42}).unwrap();
 //! #         assert!(!n.is(&n2));
@@ -200,13 +195,15 @@ use crate::exceptions::PyRuntimeError;
 use crate::impl_::pyclass::{
     PyClassBaseType, PyClassDict, PyClassImpl, PyClassThreadChecker, PyClassWeakRef,
 };
-use crate::pyclass::{boolean_struct::False, PyClass};
+use crate::pyclass::{
+    boolean_struct::{False, True},
+    PyClass,
+};
 use crate::pyclass_init::PyClassInitializer;
 use crate::type_object::{PyLayout, PySizedLayout};
 use crate::types::PyAny;
 use crate::{
     conversion::{AsPyPointer, FromPyPointer, ToPyObject},
-    ffi::PyBaseObject_Type,
     type_object::get_tp_free,
     PyTypeInfo,
 };
@@ -295,6 +292,8 @@ impl<T: PyClass> PyCell<T> {
 
     /// Immutably borrows the value `T`. This borrow lasts as long as the returned `PyRef` exists.
     ///
+    /// For frozen classes, the simpler [`get`][Self::get] is available.
+    ///
     /// # Panics
     ///
     /// Panics if the value is currently mutably borrowed. For a non-panicking variant, use
@@ -320,6 +319,8 @@ impl<T: PyClass> PyCell<T> {
     /// mutably borrowed. This borrow lasts as long as the returned `PyRef` exists.
     ///
     /// This is the non-panicking variant of [`borrow`](#method.borrow).
+    ///
+    /// For frozen classes, the simpler [`get`][Self::get] is available.
     ///
     /// # Examples
     ///
@@ -415,6 +416,41 @@ impl<T: PyClass> PyCell<T> {
             .map(|_: ()| &*self.contents.value.get())
     }
 
+    /// Provide an immutable borrow of the value `T` without acquiring the GIL.
+    ///
+    /// This is available if the class is [`frozen`][macro@crate::pyclass] and [`Sync`].
+    ///
+    /// While the GIL is usually required to get access to `&PyCell<T>`,
+    /// compared to [`borrow`][Self::borrow] or [`try_borrow`][Self::try_borrow]
+    /// this avoids any thread or borrow checking overhead at runtime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// # use pyo3::prelude::*;
+    ///
+    /// #[pyclass(frozen)]
+    /// struct FrozenCounter {
+    ///     value: AtomicUsize,
+    /// }
+    ///
+    /// Python::with_gil(|py| {
+    ///     let counter = FrozenCounter { value: AtomicUsize::new(0) };
+    ///
+    ///     let cell = PyCell::new(py, counter).unwrap();
+    ///
+    ///     cell.get().value.fetch_add(1, Ordering::Relaxed);
+    /// });
+    /// ```
+    pub fn get(&self) -> &T
+    where
+        T: PyClass<Frozen = True> + Sync,
+    {
+        // SAFETY: The class itself is frozen and `Sync` and we do not access anything but `self.contents.value`.
+        unsafe { &*self.get_ptr() }
+    }
+
     /// Replaces the wrapped value with a new one, returning the old value.
     ///
     /// # Panics
@@ -455,14 +491,13 @@ impl<T: PyClass> PyCell<T> {
         std::mem::swap(&mut *self.borrow_mut(), &mut *other.borrow_mut())
     }
 
-    fn get_ptr(&self) -> *mut T {
+    pub(crate) fn get_ptr(&self) -> *mut T {
         self.contents.value.get()
     }
 
     /// Gets the offset of the dictionary from the start of the struct in bytes.
     pub(crate) fn dict_offset() -> ffi::Py_ssize_t {
         use memoffset::offset_of;
-        use std::convert::TryInto;
 
         let offset = offset_of!(PyCell<T>, contents) + offset_of!(PyCellContents<T>, dict);
 
@@ -474,7 +509,6 @@ impl<T: PyClass> PyCell<T> {
     /// Gets the offset of the weakref list from the start of the struct in bytes.
     pub(crate) fn weaklist_offset() -> ffi::Py_ssize_t {
         use memoffset::offset_of;
-        use std::convert::TryInto;
 
         let offset = offset_of!(PyCell<T>, contents) + offset_of!(PyCellContents<T>, weakref);
 
@@ -493,7 +527,7 @@ impl<T: PyClassImpl> PyCell<T> {
 unsafe impl<T: PyClassImpl> PyLayout<T> for PyCell<T> {}
 impl<T: PyClass> PySizedLayout<T> for PyCell<T> {}
 
-impl<T: PyClass> AsPyPointer for PyCell<T> {
+unsafe impl<T: PyClass> AsPyPointer for PyCell<T> {
     fn as_ptr(&self) -> *mut ffi::PyObject {
         (self as *const _) as *mut _
     }
@@ -568,7 +602,6 @@ impl<T: PyClass + fmt::Debug> fmt::Debug for PyCell<T> {
 ///
 ///     fn format(slf: PyRef<'_, Self>) -> String {
 ///         // We can get *mut ffi::PyObject from PyRef
-///         use pyo3::AsPyPointer;
 ///         let refcnt = unsafe { pyo3::ffi::Py_REFCNT(slf.as_ptr()) };
 ///         // We can get &Self::BaseType by as_ref
 ///         let basename = slf.as_ref().basename;
@@ -588,8 +621,8 @@ pub struct PyRef<'p, T: PyClass> {
 
 impl<'p, T: PyClass> PyRef<'p, T> {
     /// Returns a `Python` token that is bound to the lifetime of the `PyRef`.
-    pub fn py(&self) -> Python<'_> {
-        unsafe { Python::assume_gil_acquired() }
+    pub fn py(&self) -> Python<'p> {
+        self.inner.py()
     }
 }
 
@@ -600,6 +633,32 @@ where
 {
     fn as_ref(&self) -> &T::BaseType {
         unsafe { &*self.inner.ob_base.get_ptr() }
+    }
+}
+
+impl<'p, T: PyClass> PyRef<'p, T> {
+    /// Returns the raw FFI pointer represented by self.
+    ///
+    /// # Safety
+    ///
+    /// Callers are responsible for ensuring that the pointer does not outlive self.
+    ///
+    /// The reference is borrowed; callers should not decrease the reference count
+    /// when they are finished with the pointer.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut ffi::PyObject {
+        self.inner.as_ptr()
+    }
+
+    /// Returns an owned raw FFI pointer represented by self.
+    ///
+    /// # Safety
+    ///
+    /// The reference is owned; when finished the caller should either transfer ownership
+    /// of the pointer or decrease the reference count (e.g. with [`pyo3::ffi::Py_DecRef`](crate::ffi::Py_DecRef)).
+    #[inline]
+    pub fn into_ptr(self) -> *mut ffi::PyObject {
+        self.inner.into_ptr()
     }
 }
 
@@ -683,6 +742,12 @@ impl<T: PyClass> IntoPy<PyObject> for PyRef<'_, T> {
     }
 }
 
+impl<T: PyClass> IntoPy<PyObject> for &'_ PyRef<'_, T> {
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        self.inner.into_py(py)
+    }
+}
+
 impl<'a, T: PyClass> std::convert::TryFrom<&'a PyCell<T>> for crate::PyRef<'a, T> {
     type Error = PyBorrowError;
     fn try_from(cell: &'a crate::PyCell<T>) -> Result<Self, Self::Error> {
@@ -690,7 +755,7 @@ impl<'a, T: PyClass> std::convert::TryFrom<&'a PyCell<T>> for crate::PyRef<'a, T
     }
 }
 
-impl<'a, T: PyClass> AsPyPointer for PyRef<'a, T> {
+unsafe impl<'a, T: PyClass> AsPyPointer for PyRef<'a, T> {
     fn as_ptr(&self) -> *mut ffi::PyObject {
         self.inner.as_ptr()
     }
@@ -711,8 +776,8 @@ pub struct PyRefMut<'p, T: PyClass<Frozen = False>> {
 
 impl<'p, T: PyClass<Frozen = False>> PyRefMut<'p, T> {
     /// Returns a `Python` token that is bound to the lifetime of the `PyRefMut`.
-    pub fn py(&self) -> Python<'_> {
-        unsafe { Python::assume_gil_acquired() }
+    pub fn py(&self) -> Python<'p> {
+        self.inner.py()
     }
 }
 
@@ -733,6 +798,32 @@ where
 {
     fn as_mut(&mut self) -> &mut T::BaseType {
         unsafe { &mut *self.inner.ob_base.get_ptr() }
+    }
+}
+
+impl<'p, T: PyClass<Frozen = False>> PyRefMut<'p, T> {
+    /// Returns the raw FFI pointer represented by self.
+    ///
+    /// # Safety
+    ///
+    /// Callers are responsible for ensuring that the pointer does not outlive self.
+    ///
+    /// The reference is borrowed; callers should not decrease the reference count
+    /// when they are finished with the pointer.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut ffi::PyObject {
+        self.inner.as_ptr()
+    }
+
+    /// Returns an owned raw FFI pointer represented by self.
+    ///
+    /// # Safety
+    ///
+    /// The reference is owned; when finished the caller should either transfer ownership
+    /// of the pointer or decrease the reference count (e.g. with [`pyo3::ffi::Py_DecRef`](crate::ffi::Py_DecRef)).
+    #[inline]
+    pub fn into_ptr(self) -> *mut ffi::PyObject {
+        self.inner.into_ptr()
     }
 }
 
@@ -781,7 +872,13 @@ impl<T: PyClass<Frozen = False>> IntoPy<PyObject> for PyRefMut<'_, T> {
     }
 }
 
-impl<'a, T: PyClass<Frozen = False>> AsPyPointer for PyRefMut<'a, T> {
+impl<T: PyClass<Frozen = False>> IntoPy<PyObject> for &'_ PyRefMut<'_, T> {
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        self.inner.into_py(py)
+    }
+}
+
+unsafe impl<'a, T: PyClass<Frozen = False>> AsPyPointer for PyRefMut<'a, T> {
     fn as_ptr(&self) -> *mut ffi::PyObject {
         self.inner.as_ptr()
     }
@@ -859,7 +956,7 @@ pub trait PyCellLayout<T>: PyLayout<T> {
     /// # Safety
     /// - slf must be a valid pointer to an instance of a T or a subclass.
     /// - slf must not be used after this call (as it will be freed).
-    unsafe fn tp_dealloc(slf: *mut ffi::PyObject, py: Python<'_>);
+    unsafe fn tp_dealloc(py: Python<'_>, slf: *mut ffi::PyObject);
 }
 
 impl<T, U> PyCellLayout<T> for PyCellBase<U>
@@ -868,16 +965,24 @@ where
     T: PyTypeInfo,
 {
     fn ensure_threadsafe(&self) {}
-    unsafe fn tp_dealloc(slf: *mut ffi::PyObject, py: Python<'_>) {
+    unsafe fn tp_dealloc(py: Python<'_>, slf: *mut ffi::PyObject) {
+        let type_obj = T::type_object_raw(py);
         // For `#[pyclass]` types which inherit from PyAny, we can just call tp_free
-        if T::type_object_raw(py) == &mut PyBaseObject_Type {
+        if type_obj == std::ptr::addr_of_mut!(ffi::PyBaseObject_Type) {
             return get_tp_free(ffi::Py_TYPE(slf))(slf as _);
         }
 
         // More complex native types (e.g. `extends=PyDict`) require calling the base's dealloc.
         #[cfg(not(Py_LIMITED_API))]
         {
-            if let Some(dealloc) = (*T::type_object_raw(py)).tp_dealloc {
+            if let Some(dealloc) = (*type_obj).tp_dealloc {
+                // Before CPython 3.11 BaseException_dealloc would use Py_GC_UNTRACK which
+                // assumes the exception is currently GC tracked, so we have to re-track
+                // before calling the dealloc so that it can safely call Py_GC_UNTRACK.
+                #[cfg(not(any(Py_3_11, PyPy)))]
+                if ffi::PyType_FastSubclass(type_obj, ffi::Py_TPFLAGS_BASE_EXC_SUBCLASS) == 1 {
+                    ffi::PyObject_GC_Track(slf.cast());
+                }
                 dealloc(slf as _);
             } else {
                 get_tp_free(ffi::Py_TYPE(slf))(slf as _);
@@ -897,13 +1002,15 @@ where
         self.contents.thread_checker.ensure();
         self.ob_base.ensure_threadsafe();
     }
-    unsafe fn tp_dealloc(slf: *mut ffi::PyObject, py: Python<'_>) {
+    unsafe fn tp_dealloc(py: Python<'_>, slf: *mut ffi::PyObject) {
         // Safety: Python only calls tp_dealloc when no references to the object remain.
         let cell = &mut *(slf as *mut PyCell<T>);
-        ManuallyDrop::drop(&mut cell.contents.value);
+        if cell.contents.thread_checker.can_drop(py) {
+            ManuallyDrop::drop(&mut cell.contents.value);
+        }
         cell.contents.dict.clear_dict(py);
         cell.contents.weakref.clear_weakrefs(slf, py);
-        <T::BaseType as PyClassBaseType>::LayoutAsBase::tp_dealloc(slf, py)
+        <T::BaseType as PyClassBaseType>::LayoutAsBase::tp_dealloc(py, slf)
     }
 }
 
@@ -1002,6 +1109,31 @@ mod tests {
 
             let _guard = cell2.borrow();
             cell.swap(cell2);
+        })
+    }
+
+    #[test]
+    fn test_as_ptr() {
+        Python::with_gil(|py| {
+            let cell = PyCell::new(py, SomeClass(0)).unwrap();
+            let ptr = cell.as_ptr();
+
+            assert_eq!(cell.borrow().as_ptr(), ptr);
+            assert_eq!(cell.borrow_mut().as_ptr(), ptr);
+        })
+    }
+
+    #[test]
+    fn test_into_ptr() {
+        Python::with_gil(|py| {
+            let cell = PyCell::new(py, SomeClass(0)).unwrap();
+            let ptr = cell.as_ptr();
+
+            assert_eq!(cell.borrow().into_ptr(), ptr);
+            unsafe { ffi::Py_DECREF(ptr) };
+
+            assert_eq!(cell.borrow_mut().into_ptr(), ptr);
+            unsafe { ffi::Py_DECREF(ptr) };
         })
     }
 }

@@ -1,6 +1,5 @@
-// Copyright (c) 2017-present PyO3 Project and Contributors
 use crate::Python;
-use crate::{ffi, AsPyPointer, PyAny};
+use crate::{ffi, PyAny};
 use crate::{pyobject_native_type_core, PyErr, PyResult};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
@@ -16,33 +15,33 @@ use std::os::raw::{c_char, c_int, c_void};
 ///
 /// # Example
 /// ```
-///  use std::ffi::CString;
-///  use pyo3::{prelude::*, types::PyCapsule};
+/// use pyo3::{prelude::*, types::PyCapsule};
+/// use std::ffi::CString;
 ///
-///  #[repr(C)]
-///  struct Foo {
-///      pub val: u32,
-///  }
+/// #[repr(C)]
+/// struct Foo {
+///     pub val: u32,
+/// }
 ///
-///  let r = Python::with_gil(|py| -> PyResult<()> {
-///      let foo = Foo { val: 123 };
-///      let name = CString::new("builtins.capsule").unwrap();
+/// let r = Python::with_gil(|py| -> PyResult<()> {
+///     let foo = Foo { val: 123 };
+///     let name = CString::new("builtins.capsule").unwrap();
 ///
-///      let capsule = PyCapsule::new(py, foo, Some(name.clone()))?;
+///     let capsule = PyCapsule::new(py, foo, Some(name.clone()))?;
 ///
-///      let module = PyModule::import(py, "builtins")?;
-///      module.add("capsule", capsule)?;
+///     let module = PyModule::import(py, "builtins")?;
+///     module.add("capsule", capsule)?;
 ///
-///      let cap: &Foo = unsafe { PyCapsule::import(py, name.as_ref())? };
-///      assert_eq!(cap.val, 123);
-///      Ok(())
-///  });
-///  assert!(r.is_ok());
+///     let cap: &Foo = unsafe { PyCapsule::import(py, name.as_ref())? };
+///     assert_eq!(cap.val, 123);
+///     Ok(())
+/// });
+/// assert!(r.is_ok());
 /// ```
 #[repr(transparent)]
 pub struct PyCapsule(PyAny);
 
-pyobject_native_type_core!(PyCapsule, ffi::PyCapsule_Type, #checkfunction=ffi::PyCapsule_CheckExact);
+pyobject_native_type_core!(PyCapsule, pyobject_native_static_type_object!(ffi::PyCapsule_Type), #checkfunction=ffi::PyCapsule_CheckExact);
 
 impl PyCapsule {
     /// Constructs a new capsule whose contents are `value`, associated with `name`.
@@ -196,12 +195,6 @@ impl PyCapsule {
             ensure_no_error(self.py())?
         }
         Ok(ctx)
-    }
-
-    /// Deprecated form of `.context()`.
-    #[deprecated(since = "0.17.0", note = "replaced with .context()")]
-    pub fn get_context(&self, _: Python<'_>) -> PyResult<*mut c_void> {
-        self.context()
     }
 
     /// Obtains a reference to the value of this capsule.

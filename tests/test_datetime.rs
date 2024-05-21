@@ -1,7 +1,7 @@
 #![cfg(not(Py_LIMITED_API))]
 
 use pyo3::prelude::*;
-use pyo3::types::{timezone_utc, IntoPyDict};
+use pyo3::types::{timezone_utc, IntoPyDict, PyDate, PyDateTime, PyTime};
 use pyo3_ffi::PyDateTime_IMPORT;
 
 fn _get_subclasses<'p>(
@@ -36,7 +36,7 @@ fn _get_subclasses<'p>(
 macro_rules! assert_check_exact {
     ($check_func:ident, $check_func_exact:ident, $obj: expr) => {
         unsafe {
-            use pyo3::{ffi::*, AsPyPointer};
+            use pyo3::ffi::*;
             assert!($check_func(($obj).as_ptr()) != 0);
             assert!($check_func_exact(($obj).as_ptr()) != 0);
         }
@@ -46,7 +46,7 @@ macro_rules! assert_check_exact {
 macro_rules! assert_check_only {
     ($check_func:ident, $check_func_exact:ident, $obj: expr) => {
         unsafe {
-            use pyo3::{ffi::*, AsPyPointer};
+            use pyo3::ffi::*;
             assert!($check_func(($obj).as_ptr()) != 0);
             assert!($check_func_exact(($obj).as_ptr()) == 0);
         }
@@ -61,6 +61,9 @@ fn test_date_check() {
         assert_check_exact!(PyDate_Check, PyDate_CheckExact, obj);
         assert_check_only!(PyDate_Check, PyDate_CheckExact, sub_obj);
         assert_check_only!(PyDate_Check, PyDate_CheckExact, sub_sub_obj);
+        assert!(obj.is_instance_of::<PyDate>());
+        assert!(!obj.is_instance_of::<PyTime>());
+        assert!(!obj.is_instance_of::<PyDateTime>());
     });
 }
 
@@ -73,6 +76,9 @@ fn test_time_check() {
         assert_check_exact!(PyTime_Check, PyTime_CheckExact, obj);
         assert_check_only!(PyTime_Check, PyTime_CheckExact, sub_obj);
         assert_check_only!(PyTime_Check, PyTime_CheckExact, sub_sub_obj);
+        assert!(!obj.is_instance_of::<PyDate>());
+        assert!(obj.is_instance_of::<PyTime>());
+        assert!(!obj.is_instance_of::<PyDateTime>());
     });
 }
 
@@ -80,7 +86,7 @@ fn test_time_check() {
 fn test_datetime_check() {
     Python::with_gil(|py| {
         let (obj, sub_obj, sub_sub_obj) = _get_subclasses(py, "datetime", "2018, 1, 1, 13, 30, 15")
-            .map_err(|e| e.print(py))
+            .map_err(|e| e.display(py))
             .unwrap();
         unsafe { PyDateTime_IMPORT() }
 
@@ -88,6 +94,9 @@ fn test_datetime_check() {
         assert_check_exact!(PyDateTime_Check, PyDateTime_CheckExact, obj);
         assert_check_only!(PyDateTime_Check, PyDateTime_CheckExact, sub_obj);
         assert_check_only!(PyDateTime_Check, PyDateTime_CheckExact, sub_sub_obj);
+        assert!(obj.is_instance_of::<PyDate>());
+        assert!(!obj.is_instance_of::<PyTime>());
+        assert!(obj.is_instance_of::<PyDateTime>());
     });
 }
 

@@ -7,6 +7,7 @@ use std::fmt;
 #[cfg(not(target_os = "windows"))]
 use std::fs::File;
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
 #[pyfunction]
@@ -95,4 +96,33 @@ fn test_exception_nosegfault() {
     }
     assert!(io_err().is_err());
     assert!(parse_int().is_err());
+}
+
+#[test]
+#[cfg(Py_3_8)]
+fn test_write_unraisable() {
+    use common::UnraisableCapture;
+    use pyo3::{exceptions::PyRuntimeError, ffi};
+
+    Python::with_gil(|py| {
+        let capture = UnraisableCapture::install(py);
+
+        assert!(capture.borrow(py).capture.is_none());
+
+        let err = PyRuntimeError::new_err("foo");
+        err.write_unraisable(py, None);
+
+        let (err, object) = capture.borrow_mut(py).capture.take().unwrap();
+        assert_eq!(err.to_string(), "RuntimeError: foo");
+        assert!(object.is_none(py));
+
+        let err = PyRuntimeError::new_err("bar");
+        err.write_unraisable(py, Some(py.NotImplemented().as_ref(py)));
+
+        let (err, object) = capture.borrow_mut(py).capture.take().unwrap();
+        assert_eq!(err.to_string(), "RuntimeError: bar");
+        assert!(object.as_ptr() == unsafe { ffi::Py_NotImplemented() });
+
+        capture.borrow_mut(py).uninstall(py);
+    });
 }

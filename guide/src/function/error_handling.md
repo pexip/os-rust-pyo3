@@ -13,7 +13,7 @@ Rust code uses the generic [`Result<T, E>`] enum to propagate errors. The error 
 PyO3 has the [`PyErr`] type which represents a Python exception. If a PyO3 API could result in a Python exception being raised, the return type of that `API` will be [`PyResult<T>`], which is an alias for the type `Result<T, PyErr>`.
 
 In summary:
-- When Python exceptions are raised and caught by PyO3, the exception will stored in the `Err` variant of the `PyResult`.
+- When Python exceptions are raised and caught by PyO3, the exception will be stored in the `Err` variant of the `PyResult`.
 - Passing Python exceptions through Rust code then uses all the "normal" techniques such as the `?` operator, with `PyErr` as the error type.
 - Finally, when a `PyResult` crosses from Rust back to Python via PyO3, if the result is an `Err` variant the contained exception will be raised.
 
@@ -88,7 +88,8 @@ Traceback (most recent call last):
 ValueError: invalid digit found in string
 ```
 
-As a more complete example, the following snippet defines a Rust error named `CustomIOError`. It then defines a `From<CustomIOError> for PyErr`, which returns a `PyErr` representing Python's `OSError`. Finally, it
+As a more complete example, the following snippet defines a Rust error named `CustomIOError`. It then defines a `From<CustomIOError> for PyErr`, which returns a `PyErr` representing Python's `OSError`.
+Therefore, it can use this error in the result of a `#[pyfunction]` directly, relying on the conversion if it has to be propagated into a Python exception.
 
 ```rust
 use pyo3::exceptions::PyOSError;
@@ -112,10 +113,10 @@ impl std::convert::From<CustomIOError> for PyErr {
     }
 }
 
-pub struct Connection { /* ... */}
+pub struct Connection {/* ... */}
 
 fn bind(addr: String) -> Result<Connection, CustomIOError> {
-    if &addr == "0.0.0.0"{
+    if &addr == "0.0.0.0" {
         Err(CustomIOError)
     } else {
         Ok(Connection{ /* ... */})
@@ -125,6 +126,7 @@ fn bind(addr: String) -> Result<Connection, CustomIOError> {
 #[pyfunction]
 fn connect(s: String) -> Result<(), CustomIOError> {
     bind(s)?;
+    // etc.
     Ok(())
 }
 

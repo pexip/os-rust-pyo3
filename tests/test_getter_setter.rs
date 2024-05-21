@@ -1,9 +1,12 @@
 #![cfg(feature = "macros")]
 
+use std::cell::Cell;
+
 use pyo3::prelude::*;
 use pyo3::py_run;
 use pyo3::types::{IntoPyDict, PyList};
 
+#[path = "../src/tests/common.rs"]
 mod common;
 
 #[pyclass]
@@ -40,7 +43,7 @@ impl ClassWithProperties {
 
     #[getter]
     fn get_data_list<'py>(&self, py: Python<'py>) -> &'py PyList {
-        PyList::new(py, &[self.num])
+        PyList::new(py, [self.num])
     }
 }
 
@@ -156,5 +159,81 @@ fn tuple_struct_getter_setter() {
         py_assert!(py, inst, "inst.num == 10");
         py_run!(py, inst, "inst.num = 20");
         py_assert!(py, inst, "inst.num == 20");
+    });
+}
+
+#[pyclass(get_all, set_all)]
+struct All {
+    num: i32,
+}
+
+#[test]
+fn get_set_all() {
+    Python::with_gil(|py| {
+        let inst = Py::new(py, All { num: 10 }).unwrap();
+
+        py_run!(py, inst, "assert inst.num == 10");
+        py_run!(py, inst, "inst.num = 20; assert inst.num == 20");
+    });
+}
+
+#[pyclass(get_all)]
+struct All2 {
+    #[pyo3(set)]
+    num: i32,
+}
+
+#[test]
+fn get_all_and_set() {
+    Python::with_gil(|py| {
+        let inst = Py::new(py, All2 { num: 10 }).unwrap();
+
+        py_run!(py, inst, "assert inst.num == 10");
+        py_run!(py, inst, "inst.num = 20; assert inst.num == 20");
+    });
+}
+
+#[pyclass]
+struct CellGetterSetter {
+    #[pyo3(get, set)]
+    cell_inner: Cell<i32>,
+}
+
+#[test]
+fn cell_getter_setter() {
+    let c = CellGetterSetter {
+        cell_inner: Cell::new(10),
+    };
+    Python::with_gil(|py| {
+        let inst = Py::new(py, c).unwrap().to_object(py);
+        let cell = Cell::new(20).to_object(py);
+
+        py_run!(py, cell, "assert cell == 20");
+        py_run!(py, inst, "assert inst.cell_inner == 10");
+        py_run!(
+            py,
+            inst,
+            "inst.cell_inner = 20; assert inst.cell_inner == 20"
+        );
+    });
+}
+
+#[test]
+fn borrowed_value_with_lifetime_of_self() {
+    #[pyclass]
+    struct BorrowedValue {}
+
+    #[pymethods]
+    impl BorrowedValue {
+        #[getter]
+        fn value(&self) -> &str {
+            "value"
+        }
+    }
+
+    Python::with_gil(|py| {
+        let inst = Py::new(py, BorrowedValue {}).unwrap().to_object(py);
+
+        py_run!(py, inst, "assert inst.value == 'value'");
     });
 }
