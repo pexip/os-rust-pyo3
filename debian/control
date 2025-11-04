@@ -43,7 +43,7 @@ Depends:
  librust-either-1+default-dev (>= 1.9-~~),
  librust-eyre-0.6+default-dev (>= 0.6.8-~~),
  librust-hashbrown-dev (<< 0.17-~~),
- librust-hashbrown-dev (>= 0.15.0-~~),
+ librust-hashbrown-dev (>= 0.14.5-~~),
  librust-iana-time-zone-0.1+default-dev,
  librust-iana-time-zone-0.1+fallback-dev,
  librust-indexmap-2+default-dev (>= 2.5.0-~~),
