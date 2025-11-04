@@ -118,7 +118,7 @@ Depends:
  librust-smallvec-1+default-dev,
  librust-time-0.3-dev (>= 0.3.38-~~),
  librust-unindent-0.2+default-dev (>= 0.2.1-~~),
- librust-uuid-1+default-dev (>= 1.11.0-~~)
+ librust-uuid-1+default-dev (>= 1.10.0-~~)
 Provides:
  librust-pyo3+abi3-dev (= ${binary:Version}),
  librust-pyo3+abi3-py310-dev (= ${binary:Version}),
