@@ -1,10 +1,13 @@
-use crate::ffi;
+use crate::instance::Bound;
+use crate::types::any::PyAnyMethods;
 use crate::types::PyType;
+use crate::{ffi, PyTypeInfo};
 use crate::{PyAny, PyResult};
 
 /// Represents a Python `super` object.
 ///
-/// This type is immutable.
+/// Values of this type are accessed via PyO3's smart pointers, e.g. as
+/// [`Py<PySuper>`][crate::Py] or [`Bound<'py, PySuper>`][Bound].
 #[repr(transparent)]
 pub struct PySuper(PyAny);
 
@@ -18,7 +21,7 @@ impl PySuper {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use pyo3::prelude::*;
     ///
     /// #[pyclass(subclass)]
@@ -48,16 +51,19 @@ impl PySuper {
     ///         (SubClass {}, BaseClass::new())
     ///     }
     ///
-    ///     fn method(self_: &PyCell<Self>) -> PyResult<&PyAny> {
+    ///     fn method<'py>(self_: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
     ///         let super_ = self_.py_super()?;
     ///         super_.call_method("method", (), None)
     ///     }
     /// }
     /// ```
-    pub fn new<'py>(ty: &'py PyType, obj: &'py PyAny) -> PyResult<&'py PySuper> {
-        let py = ty.py();
-        let super_ = py.get_type::<PySuper>().call1((ty, obj))?;
-        let super_ = super_.downcast::<PySuper>()?;
-        Ok(super_)
+    pub fn new<'py>(
+        ty: &Bound<'py, PyType>,
+        obj: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PySuper>> {
+        PySuper::type_object(ty.py()).call1((ty, obj)).map(|any| {
+            // Safety: super() always returns instance of super
+            unsafe { any.cast_into_unchecked() }
+        })
     }
 }

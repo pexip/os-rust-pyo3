@@ -1,10 +1,12 @@
 //! Python type object information
 
+use crate::ffi_ptr_ext::FfiPtrExt;
 use crate::types::{PyAny, PyType};
-use crate::{ffi, PyNativeType, Python};
+use crate::{ffi, Bound, Python};
+use std::ptr;
 
 /// `T: PyLayout<U>` represents that `T` is a concrete representation of `U` in the Python heap.
-/// E.g., `PyCell` is a concrete representation of all `pyclass`es, and `ffi::PyObject`
+/// E.g., `PyClassObject` is a concrete representation of all `pyclass`es, and `ffi::PyObject`
 /// is of `PyAny`.
 ///
 /// This trait is intended to be used internally.
@@ -15,7 +17,8 @@ use crate::{ffi, PyNativeType, Python};
 pub unsafe trait PyLayout<T> {}
 
 /// `T: PySizedLayout<U>` represents that `T` is not a instance of
-/// [`PyVarObject`](https://docs.python.org/3.8/c-api/structures.html?highlight=pyvarobject#c.PyVarObject).
+/// [`PyVarObject`](https://docs.python.org/3/c-api/structures.html#c.PyVarObject).
+///
 /// In addition, that `T` is a concrete representation of `U`.
 pub trait PySizedLayout<T>: PyLayout<T> + Sized {}
 
@@ -39,56 +42,74 @@ pub unsafe trait PyTypeInfo: Sized {
     /// Module name, if any.
     const MODULE: Option<&'static str>;
 
-    /// Utility type to make Py::as_ref work.
-    type AsRefTarget: PyNativeType;
+    /// Provides the full python type paths.
+    #[cfg(feature = "experimental-inspect")]
+    const PYTHON_TYPE: &'static str = "typing.Any";
 
     /// Returns the PyTypeObject instance for this type.
     fn type_object_raw(py: Python<'_>) -> *mut ffi::PyTypeObject;
 
     /// Returns the safe abstraction over the type object.
     #[inline]
-    fn type_object(py: Python<'_>) -> &PyType {
-        unsafe { py.from_borrowed_ptr(Self::type_object_raw(py) as _) }
+    fn type_object(py: Python<'_>) -> Bound<'_, PyType> {
+        // Making the borrowed object `Bound` is necessary for soundness reasons. It's an extreme
+        // edge case, but arbitrary Python code _could_ change the __class__ of an object and cause
+        // the type object to be freed.
+        //
+        // By making `Bound` we assume ownership which is then safe against races.
+        unsafe {
+            Self::type_object_raw(py)
+                .cast::<ffi::PyObject>()
+                .assume_borrowed_unchecked(py)
+                .to_owned()
+                .cast_into_unchecked()
+        }
     }
 
     /// Checks if `object` is an instance of this type or a subclass of this type.
     #[inline]
-    fn is_type_of(object: &PyAny) -> bool {
+    fn is_type_of(object: &Bound<'_, PyAny>) -> bool {
         unsafe { ffi::PyObject_TypeCheck(object.as_ptr(), Self::type_object_raw(object.py())) != 0 }
     }
 
     /// Checks if `object` is an instance of this type.
     #[inline]
-    fn is_exact_type_of(object: &PyAny) -> bool {
-        unsafe { ffi::Py_TYPE(object.as_ptr()) == Self::type_object_raw(object.py()) }
+    fn is_exact_type_of(object: &Bound<'_, PyAny>) -> bool {
+        unsafe {
+            ptr::eq(
+                ffi::Py_TYPE(object.as_ptr()),
+                Self::type_object_raw(object.py()),
+            )
+        }
     }
 }
 
-#[inline]
-pub(crate) unsafe fn get_tp_alloc(tp: *mut ffi::PyTypeObject) -> Option<ffi::allocfunc> {
-    #[cfg(not(Py_LIMITED_API))]
-    {
-        (*tp).tp_alloc
-    }
+/// Implemented by types which can be used as a concrete Python type inside `Py<T>` smart pointers.
+pub trait PyTypeCheck {
+    /// Name of self. This is used in error messages, for example.
+    const NAME: &'static str;
 
-    #[cfg(Py_LIMITED_API)]
-    {
-        let ptr = ffi::PyType_GetSlot(tp, ffi::Py_tp_alloc);
-        std::mem::transmute(ptr)
-    }
+    /// Provides the full python type of the allowed values.
+    #[cfg(feature = "experimental-inspect")]
+    const PYTHON_TYPE: &'static str;
+
+    /// Checks if `object` is an instance of `Self`, which may include a subtype.
+    ///
+    /// This should be equivalent to the Python expression `isinstance(object, Self)`.
+    fn type_check(object: &Bound<'_, PyAny>) -> bool;
 }
 
-#[inline]
-pub(crate) unsafe fn get_tp_free(tp: *mut ffi::PyTypeObject) -> ffi::freefunc {
-    #[cfg(not(Py_LIMITED_API))]
-    {
-        (*tp).tp_free.unwrap()
-    }
+impl<T> PyTypeCheck for T
+where
+    T: PyTypeInfo,
+{
+    const NAME: &'static str = <T as PyTypeInfo>::NAME;
 
-    #[cfg(Py_LIMITED_API)]
-    {
-        let ptr = ffi::PyType_GetSlot(tp, ffi::Py_tp_free);
-        debug_assert_ne!(ptr, std::ptr::null_mut());
-        std::mem::transmute(ptr)
+    #[cfg(feature = "experimental-inspect")]
+    const PYTHON_TYPE: &'static str = <T as PyTypeInfo>::PYTHON_TYPE;
+
+    #[inline]
+    fn type_check(object: &Bound<'_, PyAny>) -> bool {
+        T::is_type_of(object)
     }
 }

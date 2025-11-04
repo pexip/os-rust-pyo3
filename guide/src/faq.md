@@ -1,19 +1,23 @@
 # Frequently Asked Questions and troubleshooting
 
-## I'm experiencing deadlocks using PyO3 with lazy_static or once_cell!
+Sorry that you're having trouble using PyO3. If you can't find the answer to your problem in the list below, you can also reach out for help on [GitHub Discussions](https://github.com/PyO3/pyo3/discussions) and on [Discord](https://discord.gg/33kcChzH7f).
 
-`lazy_static` and `once_cell::sync` both use locks to ensure that initialization is performed only by a single thread. Because the Python GIL is an additional lock this can lead to deadlocks in the following way:
+## I'm experiencing deadlocks using PyO3 with `std::sync::OnceLock`, `std::sync::LazyLock`, `lazy_static`, and `once_cell`!
 
-1. A thread (thread A) which has acquired the Python GIL starts initialization of a `lazy_static` value.
-2. The initialization code calls some Python API which temporarily releases the GIL e.g. `Python::import`.
-3. Another thread (thread B) acquires the Python GIL and attempts to access the same `lazy_static` value.
-4. Thread B is blocked, because it waits for `lazy_static`'s initialization to lock to release.
-5. Thread A is blocked, because it waits to re-acquire the GIL which thread B still holds.
+`OnceLock`, `LazyLock`, and their thirdparty predecessors use blocking to ensure only one thread ever initializes them. Because the Python interpreter can introduce additional locks (the Python GIL and GC can both require all other threads to pause) this can lead to deadlocks in the following way:
+
+1. A thread (thread A) which is attached to the Python interpreter starts initialization of a `OnceLock` value.
+2. The initialization code calls some Python API which temporarily detaches from the interpreter e.g. `Python::import`.
+3. Another thread (thread B) attaches to the Python interpreter and attempts to access the same `OnceLock` value.
+4. Thread B is blocked, because it waits for `OnceLock`'s initialization to lock to release.
+5. On non-free-threaded Python, thread A is now also blocked, because it waits to re-attach to the interpreter (by taking the GIL which thread B still holds).
 6. Deadlock.
 
-PyO3 provides a struct [`GILOnceCell`] which works equivalently to `OnceCell` but relies solely on the Python GIL for thread safety. This means it can be used in place of `lazy_static` or `once_cell` where you are experiencing the deadlock described above. See the documentation for [`GILOnceCell`] for an example how to use it.
+PyO3 provides a struct [`PyOnceLock`] which implements a single-initialization API based on these types that avoids deadlocks. You can also make use of the [`OnceExt`] and [`OnceLockExt`] extension traits that enable using the standard library types for this purpose by providing new methods for these types that avoid the risk of deadlocking with the Python interpreter. This means they can be used in place of other choices when you are experiencing the deadlock described above. See the documentation for [`PyOnceLock`] and [`OnceExt`] for further details and an example how to use them.
 
-[`GILOnceCell`]: {{#PYO3_DOCS_URL}}/pyo3/sync/struct.GILOnceCell.html
+[`PyOnceLock`]: {{#PYO3_DOCS_URL}}/pyo3/sync/struct.PyOnceLock.html
+[`OnceExt`]: {{#PYO3_DOCS_URL}}/pyo3/sync/trait.OnceExt.html
+[`OnceLockExt`]: {{#PYO3_DOCS_URL}}/pyo3/sync/trait.OnceLockExt.html
 
 ## I can't run `cargo test`; or I can't build in a Cargo workspace: I'm having linker issues like "Symbol not found" or "Undefined reference to _PyExc_SystemError"!
 
@@ -82,7 +86,7 @@ You can give the Python interpreter a chance to process the signal properly by c
 
 You may have a nested struct similar to this:
 
-```rust
+```rust,no_run
 # use pyo3::prelude::*;
 #[pyclass]
 #[derive(Clone)]
@@ -122,15 +126,13 @@ b: <builtins.Inner object at 0x00000238FFB9C830>
 This can be especially confusing if the field is mutable, as getting the field and then mutating it won't persist - you'll just get a fresh clone of the original on the next access. Unfortunately Python and Rust don't agree about ownership - if PyO3 gave out references to (possibly) temporary Rust objects to Python code, Python code could then keep that reference alive indefinitely. Therefore returning Rust objects requires cloning.
 
 If you don't want that cloning to happen, a workaround is to allocate the field on the Python heap and store a reference to that, by using [`Py<...>`]({{#PYO3_DOCS_URL}}/pyo3/struct.Py.html):
-```rust
+```rust,no_run
 # use pyo3::prelude::*;
 #[pyclass]
-#[derive(Clone)]
 struct Inner {/* fields omitted */}
 
 #[pyclass]
 struct Outer {
-    #[pyo3(get)]
     inner: Py<Inner>,
 }
 
@@ -141,6 +143,11 @@ impl Outer {
         Ok(Self {
             inner: Py::new(py, Inner {})?,
         })
+    }
+
+    #[getter]
+    fn inner(&self, py: Python<'_>) -> Py<Inner> {
+        self.inner.clone_ref(py)
     }
 }
 ```
@@ -161,7 +168,7 @@ b: <builtins.Inner object at 0x0000020044FCC670>
 ```
 The downside to this approach is that any Rust code working on the `Outer` struct now has to acquire the GIL to do anything with its field.
 
-## I want to use the `pyo3` crate re-exported from from dependency but the proc-macros fail!
+## I want to use the `pyo3` crate re-exported from dependency but the proc-macros fail!
 
 All PyO3 proc-macros (`#[pyclass]`, `#[pyfunction]`, `#[derive(FromPyObject)]`
 and so on) expect the `pyo3` crate to be available under that name in your crate
@@ -172,10 +179,11 @@ However, when the dependency is renamed, or your crate only indirectly depends
 on `pyo3`, you need to let the macro code know where to find the crate.  This is
 done with the `crate` attribute:
 
-```rust
+```rust,no_run
 # use pyo3::prelude::*;
 # pub extern crate pyo3;
 # mod reexported { pub use ::pyo3; }
+# #[allow(dead_code)]
 #[pyclass]
 #[pyo3(crate = "reexported::pyo3")]
 struct MyClass;
@@ -183,7 +191,7 @@ struct MyClass;
 
 ## I'm trying to call Python from Rust but I get `STATUS_DLL_NOT_FOUND` or `STATUS_ENTRYPOINT_NOT_FOUND`!
 
-This happens on Windows when linking to the python DLL fails or the wrong one is linked. The Python DLL on Windows will usually be called something like: 
+This happens on Windows when linking to the python DLL fails or the wrong one is linked. The Python DLL on Windows will usually be called something like:
 - `python3X.dll` for Python 3.X, e.g. `python310.dll` for Python 3.10
 - `python3.dll` when using PyO3's `abi3` feature
 

@@ -18,9 +18,13 @@
 // DEALINGS IN THE SOFTWARE.
 
 //! `PyBuffer` implementation
+use crate::Bound;
 use crate::{err, exceptions::PyBufferError, ffi, FromPyObject, PyAny, PyResult, Python};
+use std::ffi::{
+    c_char, c_int, c_long, c_longlong, c_schar, c_short, c_uchar, c_uint, c_ulong, c_ulonglong,
+    c_ushort, c_void,
+};
 use std::marker::PhantomData;
-use std::os::raw;
 use std::pin::Pin;
 use std::{cell, mem, ptr, slice};
 use std::{ffi::CStr, fmt::Debug};
@@ -95,38 +99,38 @@ fn native_element_type_from_type_char(type_char: u8) -> ElementType {
     use self::ElementType::*;
     match type_char {
         b'c' => UnsignedInteger {
-            bytes: mem::size_of::<raw::c_char>(),
+            bytes: mem::size_of::<c_char>(),
         },
         b'b' => SignedInteger {
-            bytes: mem::size_of::<raw::c_schar>(),
+            bytes: mem::size_of::<c_schar>(),
         },
         b'B' => UnsignedInteger {
-            bytes: mem::size_of::<raw::c_uchar>(),
+            bytes: mem::size_of::<c_uchar>(),
         },
         b'?' => Bool,
         b'h' => SignedInteger {
-            bytes: mem::size_of::<raw::c_short>(),
+            bytes: mem::size_of::<c_short>(),
         },
         b'H' => UnsignedInteger {
-            bytes: mem::size_of::<raw::c_ushort>(),
+            bytes: mem::size_of::<c_ushort>(),
         },
         b'i' => SignedInteger {
-            bytes: mem::size_of::<raw::c_int>(),
+            bytes: mem::size_of::<c_int>(),
         },
         b'I' => UnsignedInteger {
-            bytes: mem::size_of::<raw::c_uint>(),
+            bytes: mem::size_of::<c_uint>(),
         },
         b'l' => SignedInteger {
-            bytes: mem::size_of::<raw::c_long>(),
+            bytes: mem::size_of::<c_long>(),
         },
         b'L' => UnsignedInteger {
-            bytes: mem::size_of::<raw::c_ulong>(),
+            bytes: mem::size_of::<c_ulong>(),
         },
         b'q' => SignedInteger {
-            bytes: mem::size_of::<raw::c_longlong>(),
+            bytes: mem::size_of::<c_longlong>(),
         },
         b'Q' => UnsignedInteger {
-            bytes: mem::size_of::<raw::c_ulonglong>(),
+            bytes: mem::size_of::<c_ulonglong>(),
         },
         b'n' => SignedInteger {
             bytes: mem::size_of::<libc::ssize_t>(),
@@ -181,23 +185,23 @@ pub unsafe trait Element: Copy {
     fn is_compatible_format(format: &CStr) -> bool;
 }
 
-impl<'source, T: Element> FromPyObject<'source> for PyBuffer<T> {
-    fn extract(obj: &PyAny) -> PyResult<PyBuffer<T>> {
+impl<T: Element> FromPyObject<'_> for PyBuffer<T> {
+    fn extract_bound(obj: &Bound<'_, PyAny>) -> PyResult<PyBuffer<T>> {
         Self::get(obj)
     }
 }
 
 impl<T: Element> PyBuffer<T> {
     /// Gets the underlying buffer from the specified python object.
-    pub fn get(obj: &PyAny) -> PyResult<PyBuffer<T>> {
-        // TODO: use nightly API Box::new_uninit() once stable
+    pub fn get(obj: &Bound<'_, PyAny>) -> PyResult<PyBuffer<T>> {
+        // TODO: use nightly API Box::new_uninit() once our MSRV is 1.82
         let mut buf = Box::new(mem::MaybeUninit::uninit());
         let buf: Box<ffi::Py_buffer> = {
             err::error_on_minusone(obj.py(), unsafe {
                 ffi::PyObject_GetBuffer(obj.as_ptr(), buf.as_mut_ptr(), ffi::PyBUF_FULL_RO)
             })?;
             // Safety: buf is initialized by PyObject_GetBuffer.
-            // TODO: use nightly API Box::assume_init() once stable
+            // TODO: use nightly API Box::assume_init() once our MSRV is 1.82
             unsafe { mem::transmute(buf) }
         };
         // Create PyBuffer immediately so that if validation checks fail, the PyBuffer::drop code
@@ -225,17 +229,22 @@ impl<T: Element> PyBuffer<T> {
 
     /// Gets the pointer to the start of the buffer memory.
     ///
-    /// Warning: the buffer memory might be mutated by other Python functions,
-    /// and thus may only be accessed while the GIL is held.
+    /// Warning: the buffer memory can be mutated by other code (including
+    /// other Python functions, if the GIL is released, or other extension
+    /// modules even if the GIL is held). You must either access memory
+    /// atomically, or ensure there are no data races yourself. See
+    /// [this blog post] for more details.
+    ///
+    /// [this blog post]: https://alexgaynor.net/2022/oct/23/buffers-on-the-edge/
     #[inline]
-    pub fn buf_ptr(&self) -> *mut raw::c_void {
+    pub fn buf_ptr(&self) -> *mut c_void {
         self.0.buf
     }
 
     /// Gets a pointer to the specified item.
     ///
     /// If `indices.len() < self.dimensions()`, returns the start address of the sub-array at the specified dimension.
-    pub fn get_ptr(&self, indices: &[usize]) -> *mut raw::c_void {
+    pub fn get_ptr(&self, indices: &[usize]) -> *mut c_void {
         let shape = &self.shape()[..indices.len()];
         for i in 0..indices.len() {
             assert!(indices[i] < shape[i]);
@@ -250,7 +259,7 @@ impl<T: Element> PyBuffer<T> {
                 },
                 #[cfg(Py_3_11)]
                 {
-                    indices.as_ptr() as *const ffi::Py_ssize_t
+                    indices.as_ptr().cast()
                 },
                 #[cfg(not(Py_3_11))]
                 {
@@ -304,7 +313,7 @@ impl<T: Element> PyBuffer<T> {
     /// However, dimensions of length 0 are possible and might need special attention.
     #[inline]
     pub fn shape(&self) -> &[usize] {
-        unsafe { slice::from_raw_parts(self.0.shape as *const usize, self.0.ndim as usize) }
+        unsafe { slice::from_raw_parts(self.0.shape.cast(), self.0.ndim as usize) }
     }
 
     /// Returns an array that holds, for each dimension, the number of bytes to skip to get to the next element in the dimension.
@@ -339,7 +348,7 @@ impl<T: Element> PyBuffer<T> {
     #[inline]
     pub fn format(&self) -> &CStr {
         if self.0.format.is_null() {
-            CStr::from_bytes_with_nul(b"B\0").unwrap()
+            ffi::c_str!("B")
         } else {
             unsafe { CStr::from_ptr(self.0.format) }
         }
@@ -348,23 +357,13 @@ impl<T: Element> PyBuffer<T> {
     /// Gets whether the buffer is contiguous in C-style order (last index varies fastest when visiting items in order of memory address).
     #[inline]
     pub fn is_c_contiguous(&self) -> bool {
-        unsafe {
-            ffi::PyBuffer_IsContiguous(
-                &*self.0 as *const ffi::Py_buffer,
-                b'C' as std::os::raw::c_char,
-            ) != 0
-        }
+        unsafe { ffi::PyBuffer_IsContiguous(&*self.0, b'C' as std::ffi::c_char) != 0 }
     }
 
     /// Gets whether the buffer is contiguous in Fortran-style order (first index varies fastest when visiting items in order of memory address).
     #[inline]
     pub fn is_fortran_contiguous(&self) -> bool {
-        unsafe {
-            ffi::PyBuffer_IsContiguous(
-                &*self.0 as *const ffi::Py_buffer,
-                b'F' as std::os::raw::c_char,
-            ) != 0
-        }
+        unsafe { ffi::PyBuffer_IsContiguous(&*self.0, b'F' as std::ffi::c_char) != 0 }
     }
 
     /// Gets the buffer memory as a slice.
@@ -502,7 +501,7 @@ impl<T: Element> PyBuffer<T> {
                     &*self.0 as *const ffi::Py_buffer as *mut ffi::Py_buffer
                 },
                 self.0.len,
-                fort as std::os::raw::c_char,
+                fort as std::ffi::c_char,
             )
         })
     }
@@ -531,7 +530,7 @@ impl<T: Element> PyBuffer<T> {
         // Due to T:Copy, we don't need to be concerned with Drop impls.
         err::error_on_minusone(py, unsafe {
             ffi::PyBuffer_ToContiguous(
-                vec.as_ptr() as *mut raw::c_void,
+                vec.as_ptr() as *mut c_void,
                 #[cfg(Py_3_11)]
                 &*self.0,
                 #[cfg(not(Py_3_11))]
@@ -539,7 +538,7 @@ impl<T: Element> PyBuffer<T> {
                     &*self.0 as *const ffi::Py_buffer as *mut ffi::Py_buffer
                 },
                 self.0.len,
-                fort as std::os::raw::c_char,
+                fort as std::ffi::c_char,
             )
         })?;
         // set vector length to mark the now-initialized space as usable
@@ -596,14 +595,14 @@ impl<T: Element> PyBuffer<T> {
                 },
                 #[cfg(Py_3_11)]
                 {
-                    source.as_ptr() as *const raw::c_void
+                    source.as_ptr().cast()
                 },
                 #[cfg(not(Py_3_11))]
                 {
-                    source.as_ptr() as *mut raw::c_void
+                    source.as_ptr() as *mut c_void
                 },
                 self.0.len,
-                fort as std::os::raw::c_char,
+                fort as std::ffi::c_char,
             )
         })
     }
@@ -631,7 +630,19 @@ impl<T: Element> PyBuffer<T> {
 
 impl<T> Drop for PyBuffer<T> {
     fn drop(&mut self) {
-        Python::with_gil(|_| unsafe { ffi::PyBuffer_Release(&mut *self.0) });
+        fn inner(buf: &mut Pin<Box<ffi::Py_buffer>>) {
+            if Python::try_attach(|_| unsafe { ffi::PyBuffer_Release(&mut **buf) }).is_none()
+                && crate::internal::state::is_in_gc_traversal()
+            {
+                eprintln!("Warning: PyBuffer dropped while in GC traversal, this is a bug and will leak memory.");
+            }
+            // If `try_attach` failed and `is_in_gc_traversal()` is false, then probably the interpreter has
+            // already finalized and we can just assume that the underlying memory has already been freed.
+            //
+            // So we don't handle that case here.
+        }
+
+        inner(&mut self.0);
     }
 }
 
@@ -686,15 +697,17 @@ impl_element!(f64, Float);
 
 #[cfg(test)]
 mod tests {
-    use super::PyBuffer;
+    use super::*;
+
     use crate::ffi;
+    use crate::types::any::PyAnyMethods;
     use crate::Python;
 
     #[test]
     fn test_debug() {
-        Python::with_gil(|py| {
-            let bytes = py.eval("b'abcde'", None, None).unwrap();
-            let buffer: PyBuffer<u8> = PyBuffer::get(bytes).unwrap();
+        Python::attach(|py| {
+            let bytes = py.eval(ffi::c_str!("b'abcde'"), None, None).unwrap();
+            let buffer: PyBuffer<u8> = PyBuffer::get(&bytes).unwrap();
             let expected = format!(
                 concat!(
                     "PyBuffer {{ buf: {:?}, obj: {:?}, ",
@@ -710,136 +723,132 @@ mod tests {
                 buffer.0.suboffsets,
                 buffer.0.internal
             );
-            let debug_repr = format!("{:?}", buffer);
+            let debug_repr = format!("{buffer:?}");
             assert_eq!(debug_repr, expected);
         });
     }
 
     #[test]
     fn test_element_type_from_format() {
-        use super::ElementType;
         use super::ElementType::*;
-        use std::ffi::CStr;
         use std::mem::size_of;
-        use std::os::raw;
 
-        for (cstr, expected) in &[
+        for (cstr, expected) in [
             // @ prefix goes to native_element_type_from_type_char
             (
-                "@b\0",
+                ffi::c_str!("@b"),
                 SignedInteger {
-                    bytes: size_of::<raw::c_schar>(),
+                    bytes: size_of::<c_schar>(),
                 },
             ),
             (
-                "@c\0",
+                ffi::c_str!("@c"),
                 UnsignedInteger {
-                    bytes: size_of::<raw::c_char>(),
+                    bytes: size_of::<c_char>(),
                 },
             ),
             (
-                "@b\0",
+                ffi::c_str!("@b"),
                 SignedInteger {
-                    bytes: size_of::<raw::c_schar>(),
+                    bytes: size_of::<c_schar>(),
                 },
             ),
             (
-                "@B\0",
+                ffi::c_str!("@B"),
                 UnsignedInteger {
-                    bytes: size_of::<raw::c_uchar>(),
+                    bytes: size_of::<c_uchar>(),
                 },
             ),
-            ("@?\0", Bool),
+            (ffi::c_str!("@?"), Bool),
             (
-                "@h\0",
+                ffi::c_str!("@h"),
                 SignedInteger {
-                    bytes: size_of::<raw::c_short>(),
+                    bytes: size_of::<c_short>(),
                 },
             ),
             (
-                "@H\0",
+                ffi::c_str!("@H"),
                 UnsignedInteger {
-                    bytes: size_of::<raw::c_ushort>(),
+                    bytes: size_of::<c_ushort>(),
                 },
             ),
             (
-                "@i\0",
+                ffi::c_str!("@i"),
                 SignedInteger {
-                    bytes: size_of::<raw::c_int>(),
+                    bytes: size_of::<c_int>(),
                 },
             ),
             (
-                "@I\0",
+                ffi::c_str!("@I"),
                 UnsignedInteger {
-                    bytes: size_of::<raw::c_uint>(),
+                    bytes: size_of::<c_uint>(),
                 },
             ),
             (
-                "@l\0",
+                ffi::c_str!("@l"),
                 SignedInteger {
-                    bytes: size_of::<raw::c_long>(),
+                    bytes: size_of::<c_long>(),
                 },
             ),
             (
-                "@L\0",
+                ffi::c_str!("@L"),
                 UnsignedInteger {
-                    bytes: size_of::<raw::c_ulong>(),
+                    bytes: size_of::<c_ulong>(),
                 },
             ),
             (
-                "@q\0",
+                ffi::c_str!("@q"),
                 SignedInteger {
-                    bytes: size_of::<raw::c_longlong>(),
+                    bytes: size_of::<c_longlong>(),
                 },
             ),
             (
-                "@Q\0",
+                ffi::c_str!("@Q"),
                 UnsignedInteger {
-                    bytes: size_of::<raw::c_ulonglong>(),
+                    bytes: size_of::<c_ulonglong>(),
                 },
             ),
             (
-                "@n\0",
+                ffi::c_str!("@n"),
                 SignedInteger {
                     bytes: size_of::<libc::ssize_t>(),
                 },
             ),
             (
-                "@N\0",
+                ffi::c_str!("@N"),
                 UnsignedInteger {
                     bytes: size_of::<libc::size_t>(),
                 },
             ),
-            ("@e\0", Float { bytes: 2 }),
-            ("@f\0", Float { bytes: 4 }),
-            ("@d\0", Float { bytes: 8 }),
-            ("@z\0", Unknown),
+            (ffi::c_str!("@e"), Float { bytes: 2 }),
+            (ffi::c_str!("@f"), Float { bytes: 4 }),
+            (ffi::c_str!("@d"), Float { bytes: 8 }),
+            (ffi::c_str!("@z"), Unknown),
             // = prefix goes to standard_element_type_from_type_char
-            ("=b\0", SignedInteger { bytes: 1 }),
-            ("=c\0", UnsignedInteger { bytes: 1 }),
-            ("=B\0", UnsignedInteger { bytes: 1 }),
-            ("=?\0", Bool),
-            ("=h\0", SignedInteger { bytes: 2 }),
-            ("=H\0", UnsignedInteger { bytes: 2 }),
-            ("=l\0", SignedInteger { bytes: 4 }),
-            ("=l\0", SignedInteger { bytes: 4 }),
-            ("=I\0", UnsignedInteger { bytes: 4 }),
-            ("=L\0", UnsignedInteger { bytes: 4 }),
-            ("=q\0", SignedInteger { bytes: 8 }),
-            ("=Q\0", UnsignedInteger { bytes: 8 }),
-            ("=e\0", Float { bytes: 2 }),
-            ("=f\0", Float { bytes: 4 }),
-            ("=d\0", Float { bytes: 8 }),
-            ("=z\0", Unknown),
-            ("=0\0", Unknown),
+            (ffi::c_str!("=b"), SignedInteger { bytes: 1 }),
+            (ffi::c_str!("=c"), UnsignedInteger { bytes: 1 }),
+            (ffi::c_str!("=B"), UnsignedInteger { bytes: 1 }),
+            (ffi::c_str!("=?"), Bool),
+            (ffi::c_str!("=h"), SignedInteger { bytes: 2 }),
+            (ffi::c_str!("=H"), UnsignedInteger { bytes: 2 }),
+            (ffi::c_str!("=l"), SignedInteger { bytes: 4 }),
+            (ffi::c_str!("=l"), SignedInteger { bytes: 4 }),
+            (ffi::c_str!("=I"), UnsignedInteger { bytes: 4 }),
+            (ffi::c_str!("=L"), UnsignedInteger { bytes: 4 }),
+            (ffi::c_str!("=q"), SignedInteger { bytes: 8 }),
+            (ffi::c_str!("=Q"), UnsignedInteger { bytes: 8 }),
+            (ffi::c_str!("=e"), Float { bytes: 2 }),
+            (ffi::c_str!("=f"), Float { bytes: 4 }),
+            (ffi::c_str!("=d"), Float { bytes: 8 }),
+            (ffi::c_str!("=z"), Unknown),
+            (ffi::c_str!("=0"), Unknown),
             // unknown prefix -> Unknown
-            (":b\0", Unknown),
+            (ffi::c_str!(":b"), Unknown),
         ] {
             assert_eq!(
-                ElementType::from_format(CStr::from_bytes_with_nul(cstr.as_bytes()).unwrap()),
-                *expected,
-                "element from format &Cstr: {:?}",
-                cstr,
+                ElementType::from_format(cstr),
+                expected,
+                "element from format &Cstr: {cstr:?}",
             );
         }
     }
@@ -855,9 +864,9 @@ mod tests {
 
     #[test]
     fn test_bytes_buffer() {
-        Python::with_gil(|py| {
-            let bytes = py.eval("b'abcde'", None, None).unwrap();
-            let buffer = PyBuffer::get(bytes).unwrap();
+        Python::attach(|py| {
+            let bytes = py.eval(ffi::c_str!("b'abcde'"), None, None).unwrap();
+            let buffer = PyBuffer::get(&bytes).unwrap();
             assert_eq!(buffer.dimensions(), 1);
             assert_eq!(buffer.item_count(), 5);
             assert_eq!(buffer.format().to_str().unwrap(), "B");
@@ -887,13 +896,13 @@ mod tests {
 
     #[test]
     fn test_array_buffer() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let array = py
                 .import("array")
                 .unwrap()
                 .call_method("array", ("f", (1.0, 1.5, 2.0, 2.5)), None)
                 .unwrap();
-            let buffer = PyBuffer::get(array).unwrap();
+            let buffer = PyBuffer::get(&array).unwrap();
             assert_eq!(buffer.dimensions(), 1);
             assert_eq!(buffer.item_count(), 4);
             assert_eq!(buffer.format().to_str().unwrap(), "f");
@@ -923,7 +932,7 @@ mod tests {
             assert_eq!(buffer.to_vec(py).unwrap(), [10.0, 11.0, 12.0, 13.0]);
 
             // F-contiguous fns
-            let buffer = PyBuffer::get(array).unwrap();
+            let buffer = PyBuffer::get(&array).unwrap();
             let slice = buffer.as_fortran_slice(py).unwrap();
             assert_eq!(slice.len(), 4);
             assert_eq!(slice[1].get(), 11.0);

@@ -5,14 +5,13 @@
 use pyo3::prelude::*;
 
 #[macro_use]
-#[path = "../src/tests/common.rs"]
-mod common;
+mod test_utils;
 
 macro_rules! make_struct_using_macro {
     // Ensure that one doesn't need to fall back on the escape type: tt
     // in order to macro create pyclass.
     ($class_name:ident, $py_name:literal) => {
-        #[pyclass(name=$py_name)]
+        #[pyclass(name=$py_name, subclass)]
         struct $class_name {}
     };
 }
@@ -22,6 +21,7 @@ make_struct_using_macro!(MyBaseClass, "MyClass");
 macro_rules! set_extends_via_macro {
     ($class_name:ident, $base_class:path) => {
         // Try and pass a variable into the extends parameter
+        #[allow(dead_code)]
         #[pyclass(extends=$base_class)]
         struct $class_name {}
     };
@@ -72,7 +72,7 @@ property_rename_via_macro!(my_new_property_name);
 
 #[test]
 fn test_macro_rules_interactions() {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let my_base = py.get_type::<MyBaseClass>();
         py_assert!(py, my_base, "my_base.__name__ == 'MyClass'");
 
