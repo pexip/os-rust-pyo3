@@ -36,7 +36,7 @@ Depends:
  ${misc:Depends},
  librust-anyhow-1+default-dev (>= 1.0.1-~~),
  librust-bigdecimal-0.4+default-dev (>= 0.4.7-~~),
- librust-bytes-1+default-dev (>= 1.10-~~),
+ librust-bytes-1+default-dev (>= 1.9-~~),
  librust-chrono-0.4+clock-dev (>= 0.4.25-~~),
  librust-chrono-0.4-dev (>= 0.4.25-~~),
  librust-chrono-tz-0.10-dev,

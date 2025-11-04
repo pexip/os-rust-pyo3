@@ -8,3 +8,4 @@ skip-flaky-test
 relax-hashbrown
 pexip-relax-uuid.patch
 pexip-relax-time.patch
+pexip-relax-bytes.patch

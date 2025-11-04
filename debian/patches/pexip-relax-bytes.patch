@@ -1,0 +1,13 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index dfd491e..cdabe1a 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -360,7 +360,7 @@ version = "0.4.7"
+ optional = true
+ 
+ [dependencies.bytes]
+-version = "1.10"
++version = "1.9"
+ optional = true
+ 
+ [dependencies.chrono]
