@@ -116,7 +116,7 @@ Depends:
  librust-rust-decimal-1-dev (>= 1.15-~~),
  librust-serde-1+default-dev,
  librust-smallvec-1+default-dev,
- librust-time-0.3-dev (>= 0.3.38-~~),
+ librust-time-0.3-dev (>= 0.3.37-~~),
  librust-unindent-0.2+default-dev (>= 0.2.1-~~),
  librust-uuid-1+default-dev (>= 1.10.0-~~)
 Provides:
