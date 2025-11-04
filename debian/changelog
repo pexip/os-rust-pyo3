@@ -1,3 +1,9 @@
+rust-pyo3 (0.26.0-2+pexip25u1) pexip-trixie; urgency=medium
+
+  * New upstream release
+
+ -- Huw Jones <Huw@pexip.com>  Tue, 04 Nov 2025 11:58:45 +0000
+
 rust-pyo3 (0.26.0-2) unstable; urgency=medium
 
   * Team upload.
