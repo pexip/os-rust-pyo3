@@ -20,8 +20,9 @@ Build-Depends-Arch: cargo:native <!nocheck>,
  librust-pyo3-macros-0.26+default-dev <!nocheck>,
  librust-pyo3-macros-0.26+default-dev (<< 0.26.1-~~) <!nocheck>,
  librust-unindent-0.2+default-dev (>= 0.2.1-~~) <!nocheck>
-Maintainer: Debian Rust Maintainers <pkg-rust-maintainers@alioth-lists.debian.net>
-Uploaders:
+Maintainer: Pexip AS <packaging@pexip.com>
+XSBC-Pexip-Original-Maintainer: Debian Rust Maintainers <pkg-rust-maintainers@alioth-lists.debian.net>
+XSBC-Pexip-Original-Uploaders:
  Jelmer Vernooĳ <jelmer@debian.org>
 Standards-Version: 4.7.2
 Vcs-Git: https://salsa.debian.org/rust-team/debcargo-conf.git [src/pyo3]

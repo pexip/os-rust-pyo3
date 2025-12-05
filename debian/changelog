@@ -1,3 +1,9 @@
+rust-pyo3 (0.26.0-2+pexip25u4) pexip-trixie; urgency=medium
+
+  * Fix maintainers/uploaders
+
+ -- Huw Jones <Huw@pexip.com>  Fri, 05 Dec 2025 11:26:15 +0000
+
 rust-pyo3 (0.26.0-2+pexip25u3) pexip-trixie; urgency=medium
 
   * Trixie build for product distribution
