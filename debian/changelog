@@ -1,3 +1,28 @@
+rust-pyo3 (0.27.2-2) unstable; urgency=medium
+
+  * Fix Breaks on librust-debversion-dev to correctly break versions < 0.5
+    instead of < 0.4.7, to fix migration issues
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Tue, 09 Dec 2025 19:27:32 +0000
+
+rust-pyo3 (0.27.2-1) unstable; urgency=medium
+
+  * Package pyo3 0.27.2 from crates.io using debcargo 2.7.11
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Mon, 1 Dec 2025 09:12:03 +0000
+
+rust-pyo3 (0.27.1-2) unstable; urgency=medium
+
+  * Target unstable distribution.
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Tue, 18 Nov 2025 10:30:47 +0000
+
+rust-pyo3 (0.27.1-1) experimental; urgency=medium
+
+  * Package pyo3 0.27.1 from crates.io using debcargo 2.7.11
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Thu, 30 Oct 2025 18:56:54 +0000
+
 rust-pyo3 (0.26.0-2) unstable; urgency=medium
 
   * Team upload.

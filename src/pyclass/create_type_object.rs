@@ -10,7 +10,6 @@ use crate::{
         pymethods::{Getter, PyGetterDef, PyMethodDefType, PySetterDef, Setter, _call_clear},
         trampoline::trampoline,
     },
-    internal_tricks::ptr_from_ref,
     types::{typeobject::PyTypeMethods, PyType},
     Py, PyClass, PyResult, PyTypeInfo, Python,
 };
@@ -18,7 +17,7 @@ use std::{
     collections::HashMap,
     ffi::{CStr, CString},
     os::raw::{c_char, c_int, c_ulong, c_void},
-    ptr,
+    ptr::{self, NonNull},
 };
 
 pub(crate) struct PyClassTypeObject {
@@ -195,7 +194,7 @@ impl PyTypeBuilder {
                 .add_setter(setter),
             PyMethodDefType::Method(def)
             | PyMethodDefType::Class(def)
-            | PyMethodDefType::Static(def) => self.method_defs.push(def.as_method_def()),
+            | PyMethodDefType::Static(def) => self.method_defs.push(def.into_raw()),
             // These class attributes are added after the type gets created by LazyStaticType
             PyMethodDefType::ClassAttribute(_) => {}
             PyMethodDefType::StructMember(def) => self.member_defs.push(*def),
@@ -345,8 +344,7 @@ impl PyTypeBuilder {
         if !slice.is_empty() {
             unsafe { self.push_slot(ffi::Py_tp_doc, type_doc.as_ptr() as *mut c_char) }
 
-            // Running this causes PyPy to segfault.
-            #[cfg(all(not(PyPy), not(Py_LIMITED_API), not(Py_3_10)))]
+            #[cfg(all(not(Py_LIMITED_API), not(Py_3_10)))]
             {
                 // Until CPython 3.10, tp_doc was treated specially for
                 // heap-types, and it removed the text_signature value from it.
@@ -437,13 +435,12 @@ impl PyTypeBuilder {
         unsafe { self.push_slot(ffi::Py_tp_base, self.tp_base) }
 
         if !self.has_new {
-            // Flag introduced in 3.10, only worked in PyPy on 3.11
-            #[cfg(not(any(all(Py_3_10, not(PyPy)), all(Py_3_11, PyPy))))]
+            #[cfg(not(Py_3_10))]
             {
                 // Safety: This is the correct slot type for Py_tp_new
                 unsafe { self.push_slot(ffi::Py_tp_new, no_constructor_defined as *mut c_void) }
             }
-            #[cfg(any(all(Py_3_10, not(PyPy)), all(Py_3_11, PyPy)))]
+            #[cfg(Py_3_10)]
             {
                 self.class_flags |= ffi::Py_TPFLAGS_DISALLOW_INSTANTIATION;
             }
@@ -557,7 +554,7 @@ fn bpo_45315_workaround(py: Python<'_>, class_name: CString) {
 }
 
 /// Default new implementation
-#[cfg(not(any(all(Py_3_10, not(PyPy)), all(Py_3_11, PyPy))))]
+#[cfg(not(Py_3_10))]
 unsafe extern "C" fn no_constructor_defined(
     subtype: *mut ffi::PyTypeObject,
     _args: *mut ffi::PyObject,
@@ -702,7 +699,9 @@ impl GetSetDefType {
                     (
                         Some(getset_getter),
                         Some(getset_setter),
-                        ptr_from_ref::<GetterAndSetter>(closure) as *mut _,
+                        NonNull::<GetterAndSetter>::from(closure.as_ref())
+                            .cast()
+                            .as_ptr(),
                     )
                 }
             };

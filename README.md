@@ -4,7 +4,7 @@
 [![benchmark](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/PyO3/pyo3)
 [![codecov](https://img.shields.io/codecov/c/gh/PyO3/pyo3?logo=codecov)](https://codecov.io/gh/PyO3/pyo3)
 [![crates.io](https://img.shields.io/crates/v/pyo3?logo=rust)](https://crates.io/crates/pyo3)
-[![minimum rustc 1.63](https://img.shields.io/badge/rustc-1.63+-blue?logo=rust)](https://rust-lang.github.io/rfcs/2495-min-rust-version.html)
+[![minimum rustc 1.74](https://img.shields.io/badge/rustc-1.74+-blue?logo=rust)](https://rust-lang.github.io/rfcs/2495-min-rust-version.html)
 [![discord server](https://img.shields.io/discord/1209263839632424990?logo=discord)](https://discord.gg/33kcChzH7f)
 [![contributing notes](https://img.shields.io/badge/contribute-on%20github-Green?logo=github)](https://github.com/PyO3/pyo3/blob/main/Contributing.md)
 
@@ -20,7 +20,7 @@ Requires Rust 1.74 or greater.
 
 PyO3 supports the following Python distributions:
   - CPython 3.7 or greater
-  - PyPy 7.3 (Python 3.9+)
+  - PyPy 7.3 (Python 3.11+)
   - GraalPy 24.2 or greater (Python 3.11+)
 
 You can use PyO3 to write a native Python module in Rust, or to embed Python in a Rust binary. The following sections explain each of these in turn.
@@ -71,27 +71,24 @@ name = "string_sum"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.26.0", features = ["extension-module"] }
+pyo3 = { version = "0.27.2", features = ["extension-module"] }
 ```
 
 **`src/lib.rs`**
 
 ```rust
-use pyo3::prelude::*;
-
-/// Formats the sum of two numbers as string.
-#[pyfunction]
-fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-    Ok((a + b).to_string())
-}
-
-/// A Python module implemented in Rust. The name of this function must match
+/// A Python module implemented in Rust. The name of this module must match
 /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
 /// import the module.
-#[pymodule]
-fn string_sum(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
-    Ok(())
+#[pyo3::pymodule]
+mod string_sum {
+  use pyo3::prelude::*;
+
+  /// Formats the sum of two numbers as string.
+  #[pyfunction]
+  fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
+    Ok((a + b).to_string())
+  }
 }
 ```
 
@@ -140,7 +137,7 @@ Start a new project with `cargo new` and add  `pyo3` to the `Cargo.toml` like th
 
 ```toml
 [dependencies.pyo3]
-version = "0.26.0"
+version = "0.27.2"
 features = ["auto-initialize"]
 ```
 
@@ -223,6 +220,7 @@ about this topic.
 - [pycrdt](https://github.com/jupyter-server/pycrdt) _Python bindings for the Rust CRDT implementation [Yrs](https://github.com/y-crdt/y-crdt)._
 - [pydantic-core](https://github.com/pydantic/pydantic-core) _Core validation logic for pydantic written in Rust._
 - [primp](https://github.com/deedy5/primp) _The fastest python HTTP client that can impersonate web browsers by mimicking their headers and TLS/JA3/JA4/HTTP2 fingerprints._
+- [radiate](https://github.com/pkalivas/radiate): _A high-performance evolution engine for genetic programming and evolutionary algorithms._
 - [rateslib](https://github.com/attack68/rateslib) _A fixed income library for Python using Rust extensions._
 - [river](https://github.com/online-ml/river) _Online machine learning in python, the computationally heavy statistics algorithms are implemented in Rust._
 - [robyn](https://github.com/sparckles/Robyn) A Super Fast Async Python Web Framework with a Rust runtime.

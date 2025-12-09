@@ -1,7 +1,9 @@
 use crate::ffi_ptr_ext::FfiPtrExt;
 use crate::instance::Borrowed;
 use crate::py_result_ext::PyResultExt;
-use crate::{ffi, Bound, PyAny, PyErr, PyResult, PyTypeCheck};
+use crate::sync::PyOnceLock;
+use crate::types::{PyType, PyTypeMethods};
+use crate::{ffi, Bound, Py, PyAny, PyErr, PyResult};
 
 /// A Python iterator object.
 ///
@@ -29,7 +31,18 @@ use crate::{ffi, Bound, PyAny, PyErr, PyResult, PyTypeCheck};
 /// ```
 #[repr(transparent)]
 pub struct PyIterator(PyAny);
-pyobject_native_type_named!(PyIterator);
+
+pyobject_native_type_core!(
+    PyIterator,
+    |py| {
+        static TYPE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+        TYPE.import(py, "collections.abc", "Iterator")
+            .unwrap()
+            .as_type_ptr()
+    },
+    #module=Some("collections.abc"),
+    #checkfunction=ffi::PyIter_Check
+);
 
 impl PyIterator {
     /// Builds an iterator for an iterable Python object; the equivalent of calling `iter(obj)` in Python.
@@ -45,19 +58,24 @@ impl PyIterator {
     }
 }
 
+/// Outcomes from sending a value into a python generator
 #[derive(Debug)]
 #[cfg(all(not(PyPy), Py_3_10))]
 pub enum PySendResult<'py> {
+    /// The generator yielded a new value
     Next(Bound<'py, PyAny>),
+    /// The generator completed, returning a (possibly None) final value
     Return(Bound<'py, PyAny>),
 }
 
 #[cfg(all(not(PyPy), Py_3_10))]
 impl<'py> Bound<'py, PyIterator> {
-    /// Sends a value into a python generator. This is the equivalent of calling `generator.send(value)` in Python.
-    /// This resumes the generator and continues its execution until the next `yield` or `return` statement.
-    /// If the generator exits without returning a value, this function returns a `StopException`.
-    /// The first call to `send` must be made with `None` as the argument to start the generator, failing to do so will raise a `TypeError`.
+    /// Sends a value into a python generator. This is the equivalent of calling
+    /// `generator.send(value)` in Python. This resumes the generator and continues its execution
+    /// until the next `yield` or `return` statement. When the generator completes, the (optional)
+    /// return value will be returned as `PySendResult::Return`. All subsequent calls will return
+    /// `PySendResult::Return(None)`. The first call to `send` must be made with `None` as the
+    /// argument to start the generator, failing to do so will raise a `TypeError`.
     #[inline]
     pub fn send(&self, value: &Bound<'py, PyAny>) -> PyResult<PySendResult<'py>> {
         let py = self.py();
@@ -117,16 +135,6 @@ impl<'py> IntoIterator for &Bound<'py, PyIterator> {
     }
 }
 
-impl PyTypeCheck for PyIterator {
-    const NAME: &'static str = "Iterator";
-    #[cfg(feature = "experimental-inspect")]
-    const PYTHON_TYPE: &'static str = "collections.abc.Iterator";
-
-    fn type_check(object: &Bound<'_, PyAny>) -> bool {
-        unsafe { ffi::PyIter_Check(object.as_ptr()) != 0 }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::PyIterator;
@@ -136,7 +144,7 @@ mod tests {
     #[cfg(all(not(PyPy), Py_3_10))]
     use crate::types::PyNone;
     use crate::types::{PyAnyMethods, PyDict, PyList, PyListMethods};
-    use crate::{ffi, IntoPyObject, Python};
+    use crate::{ffi, IntoPyObject, PyTypeInfo, Python};
 
     #[test]
     fn vec_iter() {
@@ -351,7 +359,7 @@ def fibonacci(target):
 
             assert_eq!(
                 downcaster.borrow_mut(py).failed.take().unwrap().to_string(),
-                "TypeError: 'MySequence' object cannot be converted to 'Iterator'"
+                "TypeError: 'MySequence' object cannot be cast as 'Iterator'"
             );
         });
     }
@@ -390,5 +398,14 @@ def fibonacci(target):
             let hint = iter.size_hint();
             assert_eq!(hint, (3, None));
         });
+    }
+
+    #[test]
+    fn test_type_object() {
+        Python::attach(|py| {
+            let abc = PyIterator::type_object(py);
+            let iter = py.eval(ffi::c_str!("iter(())"), None, None).unwrap();
+            assert!(iter.is_instance(&abc).unwrap());
+        })
     }
 }

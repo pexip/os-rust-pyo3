@@ -1,8 +1,15 @@
 # Parallelism
 
-CPython has the infamous [Global Interpreter Lock](https://docs.python.org/3/glossary.html#term-global-interpreter-lock) (GIL), which prevents several threads from executing Python bytecode in parallel. This makes threading in Python a bad fit for [CPU-bound](https://en.wikipedia.org/wiki/CPU-bound) tasks and often forces developers to accept the overhead of multiprocessing. There is an experimental "free-threaded" version of CPython 3.13 that does not have a GIL, see the PyO3 docs on [free-threaded Python](./free-threading.md) for more information about that.
+Historically, CPython was limited by the [global interpreter lock](https://docs.python.org/3/glossary.html#term-global-interpreter-lock) (GIL), which only allowed a single thread to drive the Python interpreter at a time. This made threading in Python a bad fit for [CPU-bound](https://en.wikipedia.org/wiki/CPU-bound) tasks and often forced developers to accept the overhead of multiprocessing.
 
-In PyO3 parallelism can be easily achieved in Rust-only code. Let's take a look at our [word-count](https://github.com/PyO3/pyo3/blob/main/examples/word-count/src/lib.rs) example, where we have a `search` function that utilizes the [rayon](https://github.com/rayon-rs/rayon) crate to count words in parallel.
+Rust is well-suited to multithreaded code, and libraries like [`rayon`] can help you leverage safe parallelism with minimal effort. The [`Python::detach`] method can be used to allow the Python interpreter to do other work while the Rust work is ongoing.
+
+To enable full parallelism in your application, consider also using [free-threaded Python](./free-threading.md) which is supported since Python 3.14.
+
+## Parallelism under the Python GIL
+
+Let's take a look at our [word-count](https://github.com/PyO3/pyo3/blob/main/examples/word-count/src/lib.rs) example, where we have a `search` function that utilizes the [`rayon`] crate to count words in parallel.
+
 ```rust,no_run
 # #![allow(dead_code)]
 use pyo3::prelude::*;
@@ -32,6 +39,7 @@ fn search(contents: &str, needle: &str) -> usize {
 ```
 
 But let's assume you have a long running Rust function which you would like to execute several times in parallel. For the sake of example let's take a sequential version of the word count:
+
 ```rust,no_run
 # #![allow(dead_code)]
 # fn count_line(line: &str, needle: &str) -> usize {
@@ -50,6 +58,7 @@ fn search_sequential(contents: &str, needle: &str) -> usize {
 ```
 
 To enable parallel execution of this function, the [`Python::detach`] method can be used to temporarily release the GIL, thus allowing other Python threads to run. We then have a function exposed to the Python runtime which calls `search_sequential` inside a closure passed to [`Python::detach`] to enable true parallelism:
+
 ```rust,no_run
 # #![allow(dead_code)]
 # use pyo3::prelude::*;
@@ -74,6 +83,7 @@ fn search_sequential_detached(py: Python<'_>, contents: &str, needle: &str) -> u
 ```
 
 Now Python threads can use more than one CPU core, resolving the limitation which usually makes multi-threading in Python only good for IO-bound tasks:
+
 ```Python
 from concurrent.futures import ThreadPoolExecutor
 from word_count import search_sequential_detached
@@ -104,6 +114,7 @@ We are using `pytest-benchmark` to benchmark four word count functions:
 The benchmark script can be found [here](https://github.com/PyO3/pyo3/blob/main/examples/word-count/tests/test_word_count.py), and we can run `nox` in the `word-count` folder to benchmark these functions.
 
 While the results of the benchmark of course depend on your machine, the relative results should be similar to this (mid 2020):
+
 ```text
 -------------------------------------------------------------------------------------------------- benchmark: 4 tests -------------------------------------------------------------------------------------------------
 Name (time in ms)                                          Min                Max               Mean            StdDev             Median               IQR            Outliers       OPS            Rounds  Iterations
@@ -125,7 +136,7 @@ in parallel. It is also possible to spawn threads in Rust that acquire the GIL
 and operate on Python objects. However, care must be taken to avoid writing code
 that deadlocks with the GIL in these cases.
 
-* Note: This example is meant to illustrate how to drop and re-acquire the GIL
+- Note: This example is meant to illustrate how to drop and re-acquire the GIL
         to avoid creating deadlocks. Unless the spawned threads subsequently
         release the GIL or you are using the free-threaded build of CPython, you
         will not see any speedups due to multi-threaded parallelism using `rayon`
@@ -175,3 +186,4 @@ collecting the results from the worker threads. You should always call
 cases where worker threads need to acquire the GIL, to prevent deadlocks.
 
 [`Python::detach`]: {{#PYO3_DOCS_URL}}/pyo3/marker/struct.Python.html#method.detach
+[`rayon`]: https://github.com/rayon-rs/rayon

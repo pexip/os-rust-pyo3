@@ -1290,7 +1290,7 @@ impl<
     }
 }
 
-/// Field is not `Py<T>`; try to use `IntoPyObject` for `&T` (prefered over `ToPyObject`) to avoid
+/// Field is not `Py<T>`; try to use `IntoPyObject` for `&T` (preferred over `ToPyObject`) to avoid
 /// potentially expensive clones of containers like `Vec`
 impl<ClassT, FieldT, Offset, const IMPLEMENTS_INTOPYOBJECT: bool>
     PyClassGetterGenerator<ClassT, FieldT, Offset, false, true, IMPLEMENTS_INTOPYOBJECT>
@@ -1426,6 +1426,8 @@ impl<const IMPLEMENTS_INTOPYOBJECT: bool> ConvertField<false, IMPLEMENTS_INTOPYO
     }
 }
 
+pub trait ExtractPyClassWithClone {}
+
 #[cfg(test)]
 #[cfg(feature = "macros")]
 mod tests {
@@ -1444,7 +1446,7 @@ mod tests {
 
         for items in FrozenClass::items_iter() {
             methods.extend(items.methods.iter().map(|m| match m {
-                MaybeRuntimePyMethodDef::Static(m) => m.clone(),
+                MaybeRuntimePyMethodDef::Static(m) => *m,
                 MaybeRuntimePyMethodDef::Runtime(r) => r(),
             }));
             slots.extend_from_slice(items.slots);
@@ -1482,7 +1484,7 @@ mod tests {
 
         for items in FrozenClass::items_iter() {
             methods.extend(items.methods.iter().map(|m| match m {
-                MaybeRuntimePyMethodDef::Static(m) => m.clone(),
+                MaybeRuntimePyMethodDef::Static(m) => *m,
                 MaybeRuntimePyMethodDef::Runtime(r) => r(),
             }));
             slots.extend_from_slice(items.slots);
