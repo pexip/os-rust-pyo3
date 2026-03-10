@@ -1,11 +1,10 @@
-older-memoffset
 disable-dll
 relax-inventory
 relax-jiff
 relax-ordered-float
 fix-test-feature-requirements
 skip-flaky-test
-relax-hashbrown
+older-memoffset
 pexip-relax-uuid.patch
 pexip-relax-time.patch
 pexip-relax-bytes.patch
