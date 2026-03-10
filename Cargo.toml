@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.74"
 name = "pyo3"
-version = "0.26.0"
+version = "0.27.2"
 authors = ["PyO3 Project and Contributors <https://github.com/PyO3>"]
 build = "build.rs"
 exclude = [
@@ -50,8 +50,8 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/pyo3/pyo3"
 
 [package.metadata.docs.rs]
-features = ["full"]
 no-default-features = true
+features = ["full"]
 rustdoc-args = [
     "--cfg",
     "docsrs",
@@ -163,6 +163,10 @@ multiple-pymethods = [
     "pyo3-macros/multiple-pymethods",
 ]
 nightly = []
+num-bigint = [
+    "dep:num-bigint",
+    "dep:num-traits",
+]
 parking_lot = [
     "dep:parking_lot",
     "lock_api",
@@ -384,7 +388,7 @@ version = ">= 0.6.8, < 0.7"
 optional = true
 
 [dependencies.hashbrown]
-version = ">= 0.15.0, < 0.16"
+version = ">= 0.15.0, < 0.17"
 optional = true
 default-features = false
 
@@ -421,7 +425,7 @@ optional = true
 version = "0.9"
 
 [dependencies.num-bigint]
-version = "0.4.2"
+version = "0.4.4"
 optional = true
 
 [dependencies.num-complex]
@@ -430,6 +434,10 @@ optional = true
 
 [dependencies.num-rational]
 version = "0.4.1"
+optional = true
+
+[dependencies.num-traits]
+version = "0.2.16"
 optional = true
 
 [dependencies.once_cell]
@@ -445,10 +453,10 @@ version = "0.12"
 optional = true
 
 [dependencies.pyo3-ffi]
-version = "=0.26.0"
+version = "=0.27.2"
 
 [dependencies.pyo3-macros]
-version = "=0.26.0"
+version = "=0.27.2"
 optional = true
 
 [dependencies.rust_decimal]
@@ -525,7 +533,7 @@ version = "1.10.0"
 features = ["v4"]
 
 [build-dependencies.pyo3-build-config]
-version = "=0.26.0"
+version = "=0.27.2"
 features = ["resolve-config"]
 
 [target.'cfg(not(target_has_atomic = "64"))'.dependencies.portable-atomic]
@@ -542,6 +550,7 @@ let_unit_value = "warn"
 manual_assert = "warn"
 manual_ok_or = "warn"
 todo = "warn"
+undocumented_unsafe_blocks = "allow"
 unnecessary_wraps = "warn"
 used_underscore_binding = "warn"
 useless_transmute = "warn"

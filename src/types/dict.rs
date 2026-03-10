@@ -16,6 +16,7 @@ use crate::{ffi, BoundObject, IntoPyObject, IntoPyObjectExt, Python};
 #[repr(transparent)]
 pub struct PyDict(PyAny);
 
+#[cfg(not(GraalPy))]
 pyobject_subclassable_native_type!(PyDict, crate::ffi::PyDictObject);
 
 pyobject_native_type!(
@@ -718,7 +719,12 @@ mod borrowed_iter {
                 // Safety:
                 // - PyDict_Next returns borrowed values
                 // - we have already checked that `PyDict_Next` succeeded, so we can assume these to be non-null
-                Some(unsafe { (key.assume_borrowed(py), value.assume_borrowed(py)) })
+                Some(unsafe {
+                    (
+                        key.assume_borrowed_unchecked(py),
+                        value.assume_borrowed_unchecked(py),
+                    )
+                })
             } else {
                 None
             }

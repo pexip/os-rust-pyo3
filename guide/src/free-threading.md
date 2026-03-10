@@ -1,26 +1,26 @@
 # Supporting Free-Threaded CPython
 
-CPython 3.13 introduces an experimental "free-threaded" build of CPython that
-does not rely on the [global interpreter
-lock](https://docs.python.org/3/glossary.html#term-global-interpreter-lock)
-(often referred to as the GIL) for thread safety. As of version 0.23, PyO3 also
-has preliminary support for building Rust extensions for the free-threaded
-Python build and support for calling into free-threaded Python from Rust.
+CPython 3.14 declared support for the "free-threaded" build of CPython that
+does not rely on the [global interpreter lock](https://docs.python.org/3/glossary.html#term-global-interpreter-lock)
+(often referred to as the GIL) for thread safety. Since version 0.23, PyO3
+supports building Rust extensions for the free-threaded Python build and
+calling into free-threaded Python from Rust.
 
-If you want more background on free-threaded Python in general, see the [what's
-new](https://docs.python.org/3/whatsnew/3.13.html#whatsnew313-free-threaded-cpython)
-entry in the 3.13 release notes, the [free-threading HOWTO
-guide](https://docs.python.org/3/howto/free-threading-extensions.html#freethreading-extensions-howto)
-in the CPython docs, the [extension porting
-guide](https://py-free-threading.github.io/porting-extensions/) in the
-community-maintained Python free-threading guide, and [PEP
-703](https://peps.python.org/pep-0703/), which provides the technical background
+If you want more background on free-threaded Python in general, see the
+[what's new](https://docs.python.org/3/whatsnew/3.13.html#whatsnew313-free-threaded-cpython)
+entry in the 3.13 release notes (when the "free-threaded" build was first added as an experimental
+mode), the
+[free-threading HOWTO guide](https://docs.python.org/3/howto/free-threading-extensions.html#freethreading-extensions-howto)
+in the CPython docs, the
+[extension porting guide](https://py-free-threading.github.io/porting-extensions/)
+in the community-maintained Python free-threading guide, and
+[PEP 703](https://peps.python.org/pep-0703/), which provides the technical background
 for the free-threading implementation in CPython.
 
-In the GIL-enabled build, the global interpreter lock serializes access to the
-Python runtime. The GIL is therefore a fundamental limitation to parallel
-scaling of multithreaded Python workflows, due to [Amdahl's
-law](https://en.wikipedia.org/wiki/Amdahl%27s_law), because any time spent
+In the GIL-enabled build (the only choice before the "free-threaded" build was introduced),
+the global interpreter lock serializes access to the Python runtime. The GIL is therefore
+a fundamental limitation to parallel scaling of multithreaded Python workflows, due to
+[Amdahl's law](https://en.wikipedia.org/wiki/Amdahl%27s_law), because any time spent
 executing a parallel processing task on only one execution context fundamentally
 cannot be sped up using parallelism.
 
@@ -118,14 +118,11 @@ section](./building-and-distribution/multiple-python-versions.md) for more
 details about supporting multiple different Python versions, including the
 free-threaded build.
 
-
 ## Special considerations for the free-threaded build
 
 The free-threaded interpreter does not have a GIL. Many existing extensions
 providing mutable data structures relied on the GIL to lock Python objects and
-make interior mutability thread-safe.  Historically, PyO3's API was designed
-around the same strong assumptions, but is transitioning towards more general
-APIs applicable for both builds.
+make interior mutability thread-safe.
 
 Calling into the CPython C API is only legal when an OS thread is explicitly
 attached to the interpreter runtime. In the GIL-enabled build, this happens when
@@ -157,13 +154,13 @@ calls into your extension.
 The free-threaded build triggers global synchronization events in the following
 situations:
 
-* During garbage collection in order to get a globally consistent view of
+- During garbage collection in order to get a globally consistent view of
   reference counts and references between objects
-* In Python 3.13, when the first background thread is started in
+- In Python 3.13, when the first background thread is started in
   order to mark certain objects as immortal
-* When either `sys.settrace` or `sys.setprofile` are called in order to
+- When either `sys.settrace` or `sys.setprofile` are called in order to
   instrument running code objects and threads
-* During a call to `os.fork()`, to ensure a process-wide consistent state.
+- During a call to `os.fork()`, to ensure a process-wide consistent state.
 
 This is a non-exhaustive list and there may be other situations in future Python
 versions that can trigger global synchronization events.
@@ -272,7 +269,7 @@ the free-threaded build.
 To initialize data exactly once, use the [`PyOnceLock`] type, which is a close equivalent
 to [`std::sync::OnceLock`][`OnceLock`] that also helps avoid deadlocks by detaching from
 the Python interpreter when threads are blocking waiting for another thread to
-complete intialization. If already using [`OnceLock`] and it is impractical
+complete initialization. If already using [`OnceLock`] and it is impractical
 to replace with a [`PyOnceLock`], there is the [`OnceLockExt`] extension trait
 which adds [`OnceLockExt::get_or_init_py_attached`] to detach from the interpreter
 when blocking in the same fashion as [`PyOnceLock`]. Here is an example using
@@ -398,7 +395,6 @@ interpreter.
 [`OnceLockExt`]: {{#PYO3_DOCS_URL}}/pyo3/sync/trait.OnceLockExt.html
 [`OnceLockExt::get_or_init_py_attached`]: {{#PYO3_DOCS_URL}}/pyo3/sync/trait.OnceLockExt.html#tymethod.get_or_init_py_attached
 [`OnceLock`]: https://doc.rust-lang.org/stable/std/sync/struct.OnceLock.html
-[`OnceLock::get_or_init`]: https://doc.rust-lang.org/stable/std/sync/struct.OnceLock.html#method.get_or_init
 [`Python::detach`]: {{#PYO3_DOCS_URL}}/pyo3/marker/struct.Python.html#method.detach
 [`Python::attach`]: {{#PYO3_DOCS_URL}}/pyo3/marker/struct.Python.html#method.attach
 [`Python<'py>`]: {{#PYO3_DOCS_URL}}/pyo3/marker/struct.Python.html
