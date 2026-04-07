@@ -1,3 +1,5 @@
+Remove jiff-02 dependency
+
 Index: pyo3/Cargo.toml
 ===================================================================
 --- pyo3.orig/Cargo.toml

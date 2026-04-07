@@ -1,3 +1,5 @@
+Relax inventory version to work with trixie
+
 Index: pyo3/Cargo.toml
 ===================================================================
 --- pyo3.orig/Cargo.toml
