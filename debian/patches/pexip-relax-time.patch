@@ -1,3 +1,5 @@
+Relax time dependency to match versions in trixie
+
 diff --git a/Cargo.toml b/Cargo.toml
 index 402bedb..dfd491e 100644
 --- a/Cargo.toml

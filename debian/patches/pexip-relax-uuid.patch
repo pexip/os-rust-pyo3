@@ -1,3 +1,5 @@
+Relax uuid dependency to match versions in trixie
+
 diff --git a/Cargo.toml b/Cargo.toml
 index 29e8f43..402bedb 100644
 --- a/Cargo.toml
