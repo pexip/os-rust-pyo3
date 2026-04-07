@@ -1,3 +1,5 @@
+Relax bytes dependency to work with trixie version
+
 diff --git a/Cargo.toml b/Cargo.toml
 index dfd491e..cdabe1a 100644
 --- a/Cargo.toml
